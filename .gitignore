@@ -1,0 +1,26 @@
+# Env
+.env
+*.local
+
+# Go
+/backend/bin/
+/backend/uploads/
+*.test
+*.out
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# Strapi
+/cms/.cache/
+/cms/build/
+/cms/.tmp/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

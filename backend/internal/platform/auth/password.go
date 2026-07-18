@@ -1,0 +1,15 @@
+// Package auth provides password hashing and JWT token management.
+package auth
+
+import "golang.org/x/crypto/bcrypt"
+
+// HashPassword returns a bcrypt hash of the plaintext password.
+func HashPassword(plain string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	return string(b), err
+}
+
+// CheckPassword reports whether plain matches the bcrypt hash.
+func CheckPassword(hash, plain string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
+}

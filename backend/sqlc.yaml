@@ -1,0 +1,25 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    # Schema is read from the shared root-level migrations (up files).
+    schema: "../migrations"
+    queries: "internal/repository/postgres/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/repository/postgres/sqlc"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_interface: true
+        emit_enum_valid_method: true
+        emit_all_enum_values: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true

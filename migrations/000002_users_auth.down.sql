@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS auth_providers;
+DROP TABLE IF EXISTS users;
+DROP TYPE IF EXISTS user_status;
+DROP TYPE IF EXISTS user_role;
