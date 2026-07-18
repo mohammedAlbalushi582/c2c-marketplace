@@ -20,6 +20,11 @@ yarn-error.log*
 /cms/build/
 /cms/.tmp/
 
+# TLS certs / keys (never commit private keys)
+*.pem
+*.key
+*.crt
+
 # Editor / OS
 .DS_Store
 .idea/
