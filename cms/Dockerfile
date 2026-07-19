@@ -5,6 +5,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# The admin-panel bundle needs more heap than Node auto-sizes on small VPSes.
+ENV NODE_OPTIONS=--max-old-space-size=3072
 RUN npm run build
 
 FROM node:20-alpine AS runtime
