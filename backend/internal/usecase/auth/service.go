@@ -109,6 +109,10 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh string) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
+	// A user suspended since this token was issued must not be able to renew.
+	if user.Status != sqlc.UserStatusActive {
+		return nil, domain.ErrForbidden
+	}
 	// Rotate: revoke the presented token before issuing a fresh pair.
 	if err := s.q.RevokeSession(ctx, hash); err != nil {
 		return nil, err

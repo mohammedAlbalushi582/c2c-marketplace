@@ -27,6 +27,11 @@ func NewListingHandler(svc *listinguc.Service, store storage.Storage) *ListingHa
 
 func (h *ListingHandler) url(key string) string { return h.store.PublicURL(key) }
 
+// actorOf adapts the authenticated principal to the usecase-layer actor.
+func actorOf(u middleware.AuthUser) listinguc.Actor {
+	return listinguc.Actor{ID: u.ID, Role: u.Role}
+}
+
 // ---- search ----
 
 type searchResponse struct {
@@ -153,7 +158,7 @@ func (h *ListingHandler) Update(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, "invalid json")
 		return
 	}
-	d, err := h.svc.Update(r.Context(), u.ID, id, req.toInput(u.ID))
+	d, err := h.svc.Update(r.Context(), actorOf(u), id, req.toInput(u.ID))
 	if err != nil {
 		Error(w, err)
 		return
@@ -168,7 +173,7 @@ func (h *ListingHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, "invalid listing id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), u.ID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), actorOf(u), id); err != nil {
 		Error(w, err)
 		return
 	}
@@ -201,7 +206,7 @@ func (h *ListingHandler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	img, err := h.svc.AddImage(r.Context(), u.ID, id, key, isPrimary, 0)
+	img, err := h.svc.AddImage(r.Context(), actorOf(u), id, key, isPrimary, 0)
 	if err != nil {
 		Error(w, err)
 		return
@@ -270,16 +275,26 @@ func (h *ListingHandler) RemoveFavorite(w http.ResponseWriter, r *http.Request) 
 // ---- admin ----
 
 func (h *ListingHandler) AdminList(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.svc.AdminList(r.Context(), r.URL.Query().Get("status"))
+	q := r.URL.Query()
+	page := atoiDefault(q.Get("page"), 1)
+	if page < 1 {
+		page = 1
+	}
+	size := atoiDefault(q.Get("page_size"), 20)
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	res, err := h.svc.AdminList(r.Context(), q.Get("status"), q.Get("keyword"), int32(size), int32((page-1)*size))
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	out := make([]ListingCardDTO, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, cardFromAdminRow(row, h.url))
+	items := make([]ListingCardDTO, 0, len(res.Items))
+	for _, row := range res.Items {
+		items = append(items, cardFromAdminRow(row, h.url))
 	}
-	JSON(w, http.StatusOK, out)
+	JSON(w, http.StatusOK, searchResponse{Items: items, Total: res.Total, Page: page, PageSize: size})
 }
 
 type statusRequest struct {

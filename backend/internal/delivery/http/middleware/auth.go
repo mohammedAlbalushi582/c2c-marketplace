@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -19,13 +20,22 @@ type AuthUser struct {
 	Role string
 }
 
+// UserLookup re-reads a user's authoritative role and active state. Access
+// tokens carry the role they were signed with, so a user demoted or suspended
+// mid-session would keep their old powers until the token expires; admin
+// routes consult this instead of trusting the claim.
+type UserLookup interface {
+	LookupUser(ctx context.Context, id int64) (role string, active bool, err error)
+}
+
 // Authenticator validates bearer tokens.
 type Authenticator struct {
 	tokens *auth.Manager
+	users  UserLookup
 }
 
-func NewAuthenticator(tokens *auth.Manager) *Authenticator {
-	return &Authenticator{tokens: tokens}
+func NewAuthenticator(tokens *auth.Manager, users UserLookup) *Authenticator {
+	return &Authenticator{tokens: tokens, users: users}
 }
 
 // Optional parses a bearer token when present but never rejects the request.
@@ -51,15 +61,25 @@ func (a *Authenticator) Require(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAdmin rejects non-admin requests (must run after Require).
+// RequireAdmin rejects non-admin requests (must run after Require). The role
+// is re-read from the database so a revoked admin loses access immediately
+// rather than when their access token expires. Fails closed on lookup errors.
 func (a *Authenticator) RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := UserFromContext(r.Context())
-		if !ok || u.Role != "admin" {
+		if !ok {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		role, active, err := a.users.LookupUser(r.Context(), u.ID)
+		if err != nil || !active || role != "admin" {
+			if err != nil {
+				slog.Error("admin role lookup failed", "user_id", u.ID, "error", err)
+			}
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userCtxKey, AuthUser{ID: u.ID, Role: role})))
 	})
 }
 

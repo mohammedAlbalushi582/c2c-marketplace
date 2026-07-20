@@ -31,6 +31,16 @@ func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
+// Actor is the authenticated principal performing an action. Admins bypass
+// the ownership checks that gate edit/delete/image operations.
+type Actor struct {
+	ID   int64
+	Role string
+}
+
+// IsAdmin reports whether the actor may act on resources they do not own.
+func (a Actor) IsAdmin() bool { return a.Role == "admin" }
+
 // AttributeInput is a single category-field value supplied by the client.
 type AttributeInput struct {
 	FieldID int64
@@ -146,9 +156,9 @@ func (s *Service) Get(ctx context.Context, id int64, incrementViews bool) (*Deta
 	return &Detail{Listing: row, Images: images, Attributes: attrs}, nil
 }
 
-// Update modifies a listing the actor owns.
-func (s *Service) Update(ctx context.Context, actorID, id int64, in CreateInput) (*Detail, error) {
-	if err := s.assertOwner(ctx, actorID, id); err != nil {
+// Update modifies a listing the actor owns (or any listing, if admin).
+func (s *Service) Update(ctx context.Context, actor Actor, id int64, in CreateInput) (*Detail, error) {
+	if err := s.assertCanManage(ctx, actor, id); err != nil {
 		return nil, err
 	}
 	pt := sqlc.PriceType(in.PriceType)
@@ -201,9 +211,9 @@ func (s *Service) Update(ctx context.Context, actorID, id int64, in CreateInput)
 	return s.Get(ctx, id, false)
 }
 
-// Delete soft-deletes a listing the actor owns.
-func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
-	if err := s.assertOwner(ctx, actorID, id); err != nil {
+// Delete soft-deletes a listing the actor owns (or any listing, if admin).
+func (s *Service) Delete(ctx context.Context, actor Actor, id int64) error {
+	if err := s.assertCanManage(ctx, actor, id); err != nil {
 		return err
 	}
 	return s.store.SoftDeleteListing(ctx, id)
@@ -227,8 +237,15 @@ func (s *Service) ListByUser(ctx context.Context, userID int64) ([]sqlc.ListList
 	return s.store.ListListingsByUser(ctx, userID)
 }
 
-// AdminList returns listings for moderation, optionally filtered by status.
-func (s *Service) AdminList(ctx context.Context, status string) ([]sqlc.AdminListListingsRow, error) {
+// AdminListResult is a page of moderation rows plus the unpaginated total.
+type AdminListResult struct {
+	Items []sqlc.AdminListListingsRow
+	Total int64
+}
+
+// AdminList returns listings for moderation, optionally filtered by status
+// and keyword. An empty status means "all statuses".
+func (s *Service) AdminList(ctx context.Context, status, keyword string, limit, offset int32) (*AdminListResult, error) {
 	var ns sqlc.NullListingStatus
 	if status != "" {
 		st := sqlc.ListingStatus(status)
@@ -237,7 +254,22 @@ func (s *Service) AdminList(ctx context.Context, status string) ([]sqlc.AdminLis
 		}
 		ns = sqlc.NullListingStatus{ListingStatus: st, Valid: true}
 	}
-	return s.store.AdminListListings(ctx, ns)
+	var kw *string
+	if keyword != "" {
+		kw = &keyword
+	}
+
+	items, err := s.store.AdminListListings(ctx, sqlc.AdminListListingsParams{
+		Status: ns, Keyword: kw, Lim: limit, Off: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.store.AdminCountListings(ctx, sqlc.AdminCountListingsParams{Status: ns, Keyword: kw})
+	if err != nil {
+		return nil, err
+	}
+	return &AdminListResult{Items: items, Total: total}, nil
 }
 
 // SetStatus is the admin moderation action (approve/reject/etc.).
@@ -253,9 +285,10 @@ func (s *Service) SetStatus(ctx context.Context, id int64, status string) (sqlc.
 	return l, err
 }
 
-// AddImage attaches an uploaded image to a listing the actor owns.
-func (s *Service) AddImage(ctx context.Context, actorID, listingID int64, storageKey string, isPrimary bool, order int32) (sqlc.ListingImage, error) {
-	if err := s.assertOwner(ctx, actorID, listingID); err != nil {
+// AddImage attaches an uploaded image to a listing the actor owns (or any
+// listing, if admin).
+func (s *Service) AddImage(ctx context.Context, actor Actor, listingID int64, storageKey string, isPrimary bool, order int32) (sqlc.ListingImage, error) {
+	if err := s.assertCanManage(ctx, actor, listingID); err != nil {
 		return sqlc.ListingImage{}, err
 	}
 	return s.store.AddListingImage(ctx, sqlc.AddListingImageParams{
@@ -280,15 +313,16 @@ func (s *Service) ListFavorites(ctx context.Context, userID int64) ([]sqlc.ListF
 	return s.store.ListFavoritesByUser(ctx, userID)
 }
 
-// assertOwner verifies the listing exists and belongs to actorID.
-func (s *Service) assertOwner(ctx context.Context, actorID, id int64) error {
+// assertCanManage verifies the listing exists and the actor may modify it:
+// either they own it, or they are an admin.
+func (s *Service) assertCanManage(ctx context.Context, actor Actor, id int64) error {
 	row, err := s.store.GetListingByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrNotFound
 	} else if err != nil {
 		return err
 	}
-	if row.Listing.UserID != actorID {
+	if row.Listing.UserID != actor.ID && !actor.IsAdmin() {
 		return domain.ErrForbidden
 	}
 	return nil

@@ -76,15 +76,19 @@ export interface ListingImage {
 }
 
 export interface ListingAttribute {
+  field_id: number;
   field_key: string;
   label_ar: string;
   field_type: string;
   unit: string | null;
   value: unknown;
+  /** Untranslated stored value — what the edit form writes back. */
+  raw_value: unknown;
 }
 
 export interface ListingDetail {
   id: number;
+  user_id: number;
   title: string;
   slug: string | null;
   description: string;
@@ -96,6 +100,7 @@ export interface ListingDetail {
   status: string;
   views_count: number;
   category_id: number;
+  location_id: number | null;
   category_slug: string;
   category_name_ar: string;
   location_name_ar: string | null;
@@ -106,6 +111,26 @@ export interface ListingDetail {
 
 export interface SearchResponse {
   items: ListingCard[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  username: string | null;
+  full_name: string;
+  phone: string | null;
+  whatsapp_number: string | null;
+  role: "user" | "admin";
+  status: "active" | "suspended" | "deleted";
+  listings_count: number;
+  created_at: string;
+}
+
+export interface AdminUsersResponse {
+  items: AdminUser[];
   total: number;
   page: number;
   page_size: number;

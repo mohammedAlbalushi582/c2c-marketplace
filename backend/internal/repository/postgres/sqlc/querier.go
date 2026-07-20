@@ -12,8 +12,15 @@ type Querier interface {
 	AddFavorite(ctx context.Context, arg AddFavoriteParams) error
 	// ---- images ----
 	AddListingImage(ctx context.Context, arg AddListingImageParams) (ListingImage, error)
-	AdminListListings(ctx context.Context, status NullListingStatus) ([]AdminListListingsRow, error)
+	AdminCountListings(ctx context.Context, arg AdminCountListingsParams) (int64, error)
+	AdminListListings(ctx context.Context, arg AdminListListingsParams) ([]AdminListListingsRow, error)
+	// ---- admin ----
+	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]AdminListUsersRow, error)
+	AdminSetUserRole(ctx context.Context, arg AdminSetUserRoleParams) (User, error)
+	AdminSetUserStatus(ctx context.Context, arg AdminSetUserStatusParams) (User, error)
+	CountAdmins(ctx context.Context) (int64, error)
 	CountListings(ctx context.Context, arg CountListingsParams) (int64, error)
+	CountUsers(ctx context.Context, arg CountUsersParams) (int64, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
 	CreateCategoryField(ctx context.Context, arg CreateCategoryFieldParams) (CategoryField, error)
 	CreateListing(ctx context.Context, arg CreateListingParams) (Listing, error)

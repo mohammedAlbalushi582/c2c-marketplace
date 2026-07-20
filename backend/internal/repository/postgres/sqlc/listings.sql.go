@@ -48,6 +48,27 @@ func (q *Queries) AddListingImage(ctx context.Context, arg AddListingImageParams
 	return i, err
 }
 
+const adminCountListings = `-- name: AdminCountListings :one
+SELECT count(*) FROM listings l
+WHERE l.deleted_at IS NULL
+  AND ($1::listing_status IS NULL OR l.status = $1)
+  AND ($2::text IS NULL
+       OR l.title ILIKE '%' || $2 || '%'
+       OR l.description ILIKE '%' || $2 || '%')
+`
+
+type AdminCountListingsParams struct {
+	Status  NullListingStatus `json:"status"`
+	Keyword *string           `json:"keyword"`
+}
+
+func (q *Queries) AdminCountListings(ctx context.Context, arg AdminCountListingsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountListings, arg.Status, arg.Keyword)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const adminListListings = `-- name: AdminListListings :many
 SELECT l.id, l.user_id, l.category_id, l.location_id, l.title, l.slug, l.description, l.price, l.currency, l.price_type, l.contact_phone, l.whatsapp_number, l.status, l.is_featured, l.featured_until, l.views_count, l.published_at, l.expires_at, l.created_at, l.updated_at, l.deleted_at, COALESCE(pi.storage_key, '') AS primary_image,
        c.name_ar AS category_name_ar
@@ -59,9 +80,19 @@ LEFT JOIN LATERAL (
 ) pi ON true
 WHERE l.deleted_at IS NULL
   AND ($1::listing_status IS NULL OR l.status = $1)
+  AND ($2::text IS NULL
+       OR l.title ILIKE '%' || $2 || '%'
+       OR l.description ILIKE '%' || $2 || '%')
 ORDER BY l.created_at DESC
-LIMIT 100
+LIMIT $4 OFFSET $3
 `
+
+type AdminListListingsParams struct {
+	Status  NullListingStatus `json:"status"`
+	Keyword *string           `json:"keyword"`
+	Off     int32             `json:"off"`
+	Lim     int32             `json:"lim"`
+}
 
 type AdminListListingsRow struct {
 	ID             int64          `json:"id"`
@@ -89,8 +120,13 @@ type AdminListListingsRow struct {
 	CategoryNameAr string         `json:"category_name_ar"`
 }
 
-func (q *Queries) AdminListListings(ctx context.Context, status NullListingStatus) ([]AdminListListingsRow, error) {
-	rows, err := q.db.Query(ctx, adminListListings, status)
+func (q *Queries) AdminListListings(ctx context.Context, arg AdminListListingsParams) ([]AdminListListingsRow, error) {
+	rows, err := q.db.Query(ctx, adminListListings,
+		arg.Status,
+		arg.Keyword,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { ListingDetail, ListingAttribute } from "@/lib/types";
-import { formatPrice } from "@/lib/format";
+import { formatPrice, statusLabel, statusColor } from "@/lib/format";
 import { Button, Spinner, Badge } from "@/components/ui";
 
 function renderAttrValue(a: ListingAttribute): string {
@@ -18,10 +19,12 @@ function renderAttrValue(a: ListingAttribute): string {
 export default function ListingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const router = useRouter();
   const [listing, setListing] = useState<ListingDetail | null>(null);
   const [activeImg, setActiveImg] = useState(0);
   const [loading, setLoading] = useState(true);
   const [fav, setFav] = useState(false);
+  const [modError, setModError] = useState("");
 
   useEffect(() => {
     api<ListingDetail>(`/listings/${id}`)
@@ -46,12 +49,36 @@ export default function ListingDetailPage() {
     }
   }
 
+  async function setStatus(status: string) {
+    setModError("");
+    try {
+      await api(`/admin/listings/${id}/status`, { method: "PATCH", auth: true, body: { status } });
+      setListing((l) => (l ? { ...l, status } : l));
+    } catch (e) {
+      setModError(e instanceof ApiError ? e.message : "تعذّر تحديث الحالة");
+    }
+  }
+
+  async function remove() {
+    if (!confirm("حذف هذا الإعلان؟ لن يظهر بعد الآن في الموقع.")) return;
+    setModError("");
+    try {
+      await api(`/listings/${id}`, { method: "DELETE", auth: true });
+      router.push(isAdmin ? "/admin" : "/dashboard");
+    } catch (e) {
+      setModError(e instanceof ApiError ? e.message : "تعذّر حذف الإعلان");
+    }
+  }
+
   if (loading) return <Spinner />;
   if (!listing)
     return <div className="card p-12 text-center text-slate-500">لم يتم العثور على الإعلان</div>;
 
   const wa = listing.whatsapp_number?.replace(/[^0-9]/g, "");
   const phone = listing.contact_phone;
+  const isAdmin = user?.role === "admin";
+  const isOwner = user?.id === listing.user_id;
+  const canManage = isAdmin || isOwner;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
@@ -115,6 +142,44 @@ export default function ListingDetailPage() {
 
       {/* Contact sidebar */}
       <aside className="space-y-3">
+        {/* Moderation / owner controls */}
+        {canManage && (
+          <div className="card space-y-3 p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-slate-800">{isAdmin ? "إدارة الإعلان" : "إعلانك"}</h2>
+              <Badge className={statusColor(listing.status)}>{statusLabel(listing.status)}</Badge>
+            </div>
+
+            {isAdmin && (
+              <div className="flex gap-2">
+                {listing.status !== "active" && (
+                  <Button className="flex-1" onClick={() => setStatus("active")}>
+                    موافقة
+                  </Button>
+                )}
+                {listing.status !== "rejected" && (
+                  <Button variant="outline" className="flex-1" onClick={() => setStatus("rejected")}>
+                    رفض
+                  </Button>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Link href={`/post?edit=${listing.id}&from=/listings/${listing.id}`} className="flex-1">
+                <Button variant="outline" className="w-full">
+                  تعديل
+                </Button>
+              </Link>
+              <Button variant="danger" className="flex-1" onClick={remove}>
+                حذف
+              </Button>
+            </div>
+
+            {modError && <p className="text-sm text-red-600">{modError}</p>}
+          </div>
+        )}
+
         <div className="card space-y-3 p-5">
           <h2 className="font-bold text-slate-800">تواصل مع المعلن</h2>
           {wa && (

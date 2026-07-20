@@ -7,7 +7,178 @@ package sqlc
 
 import (
 	"context"
+	"time"
 )
+
+const adminListUsers = `-- name: AdminListUsers :many
+
+SELECT u.id, u.email, u.username, u.password_hash, u.full_name, u.phone, u.whatsapp_number, u.role, u.status, u.email_verified_at, u.created_at, u.updated_at,
+       (SELECT count(*) FROM listings l
+        WHERE l.user_id = u.id AND l.deleted_at IS NULL) AS listings_count
+FROM users u
+WHERE u.status <> 'deleted'
+  AND ($1::user_role IS NULL OR u.role = $1)
+  AND ($2::text IS NULL
+       OR u.email ILIKE '%' || $2 || '%'
+       OR u.full_name ILIKE '%' || $2 || '%'
+       OR u.username ILIKE '%' || $2 || '%')
+ORDER BY u.created_at DESC
+LIMIT $4 OFFSET $3
+`
+
+type AdminListUsersParams struct {
+	Role    NullUserRole `json:"role"`
+	Keyword *string      `json:"keyword"`
+	Off     int32        `json:"off"`
+	Lim     int32        `json:"lim"`
+}
+
+type AdminListUsersRow struct {
+	ID              int64      `json:"id"`
+	Email           string     `json:"email"`
+	Username        *string    `json:"username"`
+	PasswordHash    *string    `json:"password_hash"`
+	FullName        string     `json:"full_name"`
+	Phone           *string    `json:"phone"`
+	WhatsappNumber  *string    `json:"whatsapp_number"`
+	Role            UserRole   `json:"role"`
+	Status          UserStatus `json:"status"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ListingsCount   int64      `json:"listings_count"`
+}
+
+// ---- admin ----
+func (q *Queries) AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]AdminListUsersRow, error) {
+	rows, err := q.db.Query(ctx, adminListUsers,
+		arg.Role,
+		arg.Keyword,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListUsersRow
+	for rows.Next() {
+		var i AdminListUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Username,
+			&i.PasswordHash,
+			&i.FullName,
+			&i.Phone,
+			&i.WhatsappNumber,
+			&i.Role,
+			&i.Status,
+			&i.EmailVerifiedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ListingsCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminSetUserRole = `-- name: AdminSetUserRole :one
+UPDATE users SET role = $2 WHERE id = $1 RETURNING id, email, username, password_hash, full_name, phone, whatsapp_number, role, status, email_verified_at, created_at, updated_at
+`
+
+type AdminSetUserRoleParams struct {
+	ID   int64    `json:"id"`
+	Role UserRole `json:"role"`
+}
+
+func (q *Queries) AdminSetUserRole(ctx context.Context, arg AdminSetUserRoleParams) (User, error) {
+	row := q.db.QueryRow(ctx, adminSetUserRole, arg.ID, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Username,
+		&i.PasswordHash,
+		&i.FullName,
+		&i.Phone,
+		&i.WhatsappNumber,
+		&i.Role,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const adminSetUserStatus = `-- name: AdminSetUserStatus :one
+UPDATE users SET status = $2 WHERE id = $1 RETURNING id, email, username, password_hash, full_name, phone, whatsapp_number, role, status, email_verified_at, created_at, updated_at
+`
+
+type AdminSetUserStatusParams struct {
+	ID     int64      `json:"id"`
+	Status UserStatus `json:"status"`
+}
+
+func (q *Queries) AdminSetUserStatus(ctx context.Context, arg AdminSetUserStatusParams) (User, error) {
+	row := q.db.QueryRow(ctx, adminSetUserStatus, arg.ID, arg.Status)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Username,
+		&i.PasswordHash,
+		&i.FullName,
+		&i.Phone,
+		&i.WhatsappNumber,
+		&i.Role,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const countAdmins = `-- name: CountAdmins :one
+SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active'
+`
+
+func (q *Queries) CountAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsers = `-- name: CountUsers :one
+SELECT count(*) FROM users u
+WHERE u.status <> 'deleted'
+  AND ($1::user_role IS NULL OR u.role = $1)
+  AND ($2::text IS NULL
+       OR u.email ILIKE '%' || $2 || '%'
+       OR u.full_name ILIKE '%' || $2 || '%'
+       OR u.username ILIKE '%' || $2 || '%')
+`
+
+type CountUsersParams struct {
+	Role    NullUserRole `json:"role"`
+	Keyword *string      `json:"keyword"`
+}
+
+func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers, arg.Role, arg.Keyword)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, username, password_hash, full_name, phone, whatsapp_number)

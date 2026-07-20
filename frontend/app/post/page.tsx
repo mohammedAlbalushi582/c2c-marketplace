@@ -1,16 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, uploadImage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Category, CategoryField, Location, ListingDetail } from "@/lib/types";
 import { Button, Input, Textarea, Select, Label, Spinner } from "@/components/ui";
 
+// useSearchParams needs a Suspense boundary during static rendering.
 export default function PostPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <PostForm />
+    </Suspense>
+  );
+}
+
+function PostForm() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const params = useSearchParams();
+  const editId = params.get("edit");
+  const isEdit = !!editId;
 
+  const [loadingListing, setLoadingListing] = useState(isEdit);
   const [categories, setCategories] = useState<Category[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [fields, setFields] = useState<CategoryField[]>([]);
@@ -31,6 +44,15 @@ export default function PostPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Values carried in from the listing being edited, applied once its
+  // category's dynamic fields have been fetched.
+  const [pendingAttrs, setPendingAttrs] = useState<Record<number, unknown> | null>(null);
+  const [pendingLocationId, setPendingLocationId] = useState<number | null>(null);
+  const [existingImages, setExistingImages] = useState<ListingDetail["images"]>([]);
+
+  // Where to go after saving — admins arrive from /admin, owners from /dashboard.
+  const returnTo = params.get("from") || "/dashboard";
+
   useEffect(() => {
     if (!authLoading && !user) router.replace("/login");
   }, [authLoading, user, router]);
@@ -40,13 +62,50 @@ export default function PostPage() {
     api<Location[]>("/locations").then(setLocations).catch(() => {});
   }, []);
 
+  // Load the listing being edited and prefill the form.
+  useEffect(() => {
+    if (!editId) return;
+    setLoadingListing(true);
+    api<ListingDetail>(`/listings/${editId}`)
+      .then((l) => {
+        setForm({
+          title: l.title,
+          description: l.description,
+          price: l.price === null ? "" : String(l.price),
+          price_type: l.price_type,
+          contact_phone: l.contact_phone || "",
+          whatsapp_number: l.whatsapp_number || "",
+        });
+        setExistingImages(l.images);
+        setPendingAttrs(Object.fromEntries(l.attributes.map((a) => [a.field_id, a.raw_value])));
+        setPendingLocationId(l.location_id);
+        setCategoryId(l.category_id);
+      })
+      .catch(() => setError("تعذّر تحميل الإعلان"))
+      .finally(() => setLoadingListing(false));
+  }, [editId]);
+
+  // Resolve the saved location back into its governorate/wilayat selects.
+  useEffect(() => {
+    if (pendingLocationId === null || locations.length === 0) return;
+    const loc = locations.find((l) => l.id === pendingLocationId);
+    if (loc) {
+      setGovernorateId(String(loc.parent_id ?? loc.id));
+      setWilayatId(loc.parent_id ? String(loc.id) : "");
+    }
+    setPendingLocationId(null);
+  }, [pendingLocationId, locations]);
+
   useEffect(() => {
     if (categoryId === "") {
       setFields([]);
       return;
     }
     api<CategoryField[]>(`/categories/${categoryId}/fields`).then(setFields).catch(() => setFields([]));
-    setAttrs({});
+    // Keep the edited listing's values; a manual category switch starts fresh.
+    setAttrs(pendingAttrs ?? {});
+    setPendingAttrs(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
 
   const governorates = locations.filter((l) => l.type === "governorate");
@@ -74,39 +133,45 @@ export default function PostPage() {
 
       const location_id = wilayatId ? Number(wilayatId) : governorateId ? Number(governorateId) : null;
 
-      const created = await api<ListingDetail>("/listings", {
-        method: "POST",
-        auth: true,
-        body: {
-          category_id: Number(categoryId),
-          location_id,
-          title: form.title,
-          description: form.description,
-          price: form.price ? Number(form.price) : null,
-          price_type: form.price_type,
-          contact_phone: form.contact_phone || null,
-          whatsapp_number: form.whatsapp_number || null,
-          attributes,
-        },
-      });
+      const body = {
+        category_id: Number(categoryId),
+        location_id,
+        title: form.title,
+        description: form.description,
+        price: form.price ? Number(form.price) : null,
+        price_type: form.price_type,
+        contact_phone: form.contact_phone || null,
+        whatsapp_number: form.whatsapp_number || null,
+        attributes,
+      };
+
+      const saved = isEdit
+        ? await api<ListingDetail>(`/listings/${editId}`, { method: "PUT", auth: true, body })
+        : await api<ListingDetail>("/listings", { method: "POST", auth: true, body });
 
       for (let i = 0; i < files.length; i++) {
-        await uploadImage(created.id, files[i], i === 0);
+        await uploadImage(saved.id, files[i], !isEdit && i === 0);
       }
 
-      router.push("/dashboard?posted=1");
+      router.push(isEdit ? returnTo : "/dashboard?posted=1");
     } catch (err) {
-      setError("تعذّر نشر الإعلان، تأكد من تعبئة الحقول المطلوبة");
+      setError(
+        isEdit
+          ? "تعذّر حفظ التعديلات، تأكد من تعبئة الحقول المطلوبة"
+          : "تعذّر نشر الإعلان، تأكد من تعبئة الحقول المطلوبة"
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
-  if (authLoading || !user) return <Spinner />;
+  if (authLoading || !user || loadingListing) return <Spinner />;
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="mb-4 text-2xl font-extrabold text-slate-800">أضف إعلاناً جديداً</h1>
+      <h1 className="mb-4 text-2xl font-extrabold text-slate-800">
+        {isEdit ? "تعديل الإعلان" : "أضف إعلاناً جديداً"}
+      </h1>
       <form onSubmit={onSubmit} className="card space-y-5 p-6">
         <div>
           <Label>القسم *</Label>
@@ -198,7 +263,15 @@ export default function PostPage() {
         )}
 
         <div>
-          <Label>الصور</Label>
+          <Label>{isEdit ? "إضافة صور" : "الصور"}</Label>
+          {existingImages.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {existingImages.map((img) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={img.id} src={img.url} alt="" className="h-16 w-20 rounded-lg object-cover" />
+              ))}
+            </div>
+          )}
           <input
             type="file"
             accept="image/*"
@@ -210,9 +283,9 @@ export default function PostPage() {
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <p className="text-xs text-slate-500">سيُراجع إعلانك من قبل الإدارة قبل نشره.</p>
+        {!isEdit && <p className="text-xs text-slate-500">سيُراجع إعلانك من قبل الإدارة قبل نشره.</p>}
         <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "جارٍ النشر..." : "نشر الإعلان"}
+          {submitting ? (isEdit ? "جارٍ الحفظ..." : "جارٍ النشر...") : isEdit ? "حفظ التعديلات" : "نشر الإعلان"}
         </Button>
       </form>
     </div>

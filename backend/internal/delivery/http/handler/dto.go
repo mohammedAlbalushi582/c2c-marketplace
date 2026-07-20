@@ -116,15 +116,18 @@ type ImageDTO struct {
 }
 
 type AttributeDTO struct {
+	FieldID   int64  `json:"field_id"`
 	FieldKey  string `json:"field_key"`
 	LabelAr   string `json:"label_ar"`
 	FieldType string `json:"field_type"`
 	Unit      *string `json:"unit"`
 	Value     any    `json:"value"`
+	RawValue  any    `json:"raw_value"`
 }
 
 type ListingDetailDTO struct {
 	ID             int64          `json:"id"`
+	UserID         int64          `json:"user_id"`
 	Title          string         `json:"title"`
 	Slug           *string        `json:"slug"`
 	Description    string         `json:"description"`
@@ -136,6 +139,7 @@ type ListingDetailDTO struct {
 	Status         string         `json:"status"`
 	ViewsCount     int64          `json:"views_count"`
 	CategoryID     int64          `json:"category_id"`
+	LocationID     *int64         `json:"location_id"`
 	CategorySlug   string         `json:"category_slug"`
 	CategoryNameAr string         `json:"category_name_ar"`
 	LocationNameAr *string        `json:"location_name_ar"`
@@ -150,11 +154,11 @@ type urlFn func(key string) string
 func toDetailDTO(d *listing.Detail, url urlFn) ListingDetailDTO {
 	l := d.Listing.Listing
 	out := ListingDetailDTO{
-		ID: l.ID, Title: l.Title, Slug: l.Slug, Description: l.Description,
+		ID: l.ID, UserID: l.UserID, Title: l.Title, Slug: l.Slug, Description: l.Description,
 		Price: pgutil.NumericToFloatPtr(l.Price), Currency: l.Currency,
 		PriceType: string(l.PriceType), ContactPhone: l.ContactPhone,
 		WhatsappNumber: l.WhatsappNumber, Status: string(l.Status), ViewsCount: l.ViewsCount,
-		CategoryID: l.CategoryID, CategorySlug: d.Listing.CategorySlug,
+		CategoryID: l.CategoryID, LocationID: l.LocationID, CategorySlug: d.Listing.CategorySlug,
 		CategoryNameAr: d.Listing.CategoryNameAr, LocationNameAr: d.Listing.LocationNameAr,
 		CreatedAt: l.CreatedAt,
 		Images:    make([]ImageDTO, 0, len(d.Images)),
@@ -165,8 +169,8 @@ func toDetailDTO(d *listing.Detail, url urlFn) ListingDetailDTO {
 	}
 	for _, a := range d.Attributes {
 		out.Attributes = append(out.Attributes, AttributeDTO{
-			FieldKey: a.FieldKey, LabelAr: a.LabelAr, FieldType: string(a.FieldType),
-			Unit: a.Unit, Value: attrValue(a),
+			FieldID: a.FieldID, FieldKey: a.FieldKey, LabelAr: a.LabelAr, FieldType: string(a.FieldType),
+			Unit: a.Unit, Value: attrValue(a), RawValue: attrRawValue(a),
 		})
 	}
 	return out
@@ -187,6 +191,24 @@ func optionLabels(raw []byte) map[string]string {
 		}
 	}
 	return m
+}
+
+// attrRawValue returns the stored value as-is. Select and multiselect values
+// are option keys, which attrValue swaps for human labels — forms that write
+// the value back (the edit form) need the key, not the label.
+func attrRawValue(a sqlc.ListAttributesByListingRow) any {
+	switch a.FieldType {
+	case sqlc.FieldTypeSelect:
+		return a.ValueText
+	case sqlc.FieldTypeMultiselect:
+		var vals []string
+		if len(a.ValueJson) == 0 || json.Unmarshal(a.ValueJson, &vals) != nil {
+			return nil
+		}
+		return vals
+	default:
+		return attrValue(a)
+	}
 }
 
 func attrValue(a sqlc.ListAttributesByListingRow) any {

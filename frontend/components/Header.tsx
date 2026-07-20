@@ -1,11 +1,28 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { SearchResponse } from "@/lib/types";
 import { Button } from "@/components/ui";
 
 export function Header() {
   const { user, logout } = useAuth();
+  const pathname = usePathname();
+  const [pending, setPending] = useState<number | null>(null);
+
+  // Keep the moderation badge current as the admin moves around the site.
+  useEffect(() => {
+    if (user?.role !== "admin") {
+      setPending(null);
+      return;
+    }
+    api<SearchResponse>("/admin/listings?status=pending&page_size=1", { auth: true })
+      .then((r) => setPending(r.total))
+      .catch(() => setPending(null));
+  }, [user, pathname]);
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
@@ -23,6 +40,18 @@ export function Header() {
         <nav className="flex items-center gap-2">
           {user ? (
             <>
+              {user.role === "admin" && (
+                <Link href="/admin">
+                  <Button variant="outline">
+                    مراجعة الإعلانات
+                    {pending !== null && pending > 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                        {pending}
+                      </span>
+                    )}
+                  </Button>
+                </Link>
+              )}
               <Link href="/post">
                 <Button>+ أضف إعلان</Button>
               </Link>

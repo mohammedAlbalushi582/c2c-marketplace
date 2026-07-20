@@ -21,6 +21,7 @@ type RouterDeps struct {
 	AuthH          *handler.AuthHandler
 	Catalog        *handler.CatalogHandler
 	Listing        *handler.ListingHandler
+	User           *handler.UserHandler
 }
 
 // NewRouter builds the chi router with the /api/v1 tree and static uploads.
@@ -94,6 +95,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/admin/categories/{id}/fields", deps.Catalog.CreateField)
 			r.Get("/admin/listings", deps.Listing.AdminList)
 			r.Patch("/admin/listings/{id}/status", deps.Listing.SetStatus)
+
+			// Editing and deleting any listing goes through the regular
+			// /listings/{id} routes — the usecase layer lets admins past the
+			// ownership check.
+			r.Get("/admin/users", deps.User.List)
+			r.Patch("/admin/users/{id}/role", deps.User.SetRole)
+			r.Patch("/admin/users/{id}/status", deps.User.SetStatus)
 		})
 	})
 

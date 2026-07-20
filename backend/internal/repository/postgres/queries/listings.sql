@@ -130,5 +130,16 @@ LEFT JOIN LATERAL (
 ) pi ON true
 WHERE l.deleted_at IS NULL
   AND (sqlc.narg('status')::listing_status IS NULL OR l.status = sqlc.narg('status'))
+  AND (sqlc.narg('keyword')::text IS NULL
+       OR l.title ILIKE '%' || sqlc.narg('keyword') || '%'
+       OR l.description ILIKE '%' || sqlc.narg('keyword') || '%')
 ORDER BY l.created_at DESC
-LIMIT 100;
+LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
+
+-- name: AdminCountListings :one
+SELECT count(*) FROM listings l
+WHERE l.deleted_at IS NULL
+  AND (sqlc.narg('status')::listing_status IS NULL OR l.status = sqlc.narg('status'))
+  AND (sqlc.narg('keyword')::text IS NULL
+       OR l.title ILIKE '%' || sqlc.narg('keyword') || '%'
+       OR l.description ILIKE '%' || sqlc.narg('keyword') || '%');

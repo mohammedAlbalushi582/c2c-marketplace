@@ -21,6 +21,7 @@ import (
 	authuc "github.com/alamjad/marketplace/internal/usecase/auth"
 	"github.com/alamjad/marketplace/internal/usecase/catalog"
 	listinguc "github.com/alamjad/marketplace/internal/usecase/listing"
+	useruc "github.com/alamjad/marketplace/internal/usecase/user"
 )
 
 func main() {
@@ -61,16 +62,18 @@ func run() error {
 	authService := authuc.NewService(repo, tokens)
 	catalogService := catalog.NewService(repo)
 	listingService := listinguc.NewService(repo)
+	userService := useruc.NewService(repo)
 
 	// HTTP layer.
 	router := nethttp.NewRouter(nethttp.RouterDeps{
 		AllowedOrigins: cfg.CORSAllowedOrigins,
 		UploadDir:      cfg.UploadDir,
-		Auth:           middleware.NewAuthenticator(tokens),
+		Auth:           middleware.NewAuthenticator(tokens, userService),
 		Health:         handler.NewHealthHandler(pool),
 		AuthH:          handler.NewAuthHandler(authService),
 		Catalog:        handler.NewCatalogHandler(catalogService),
 		Listing:        handler.NewListingHandler(listingService, store),
+		User:           handler.NewUserHandler(userService),
 	})
 
 	srv := &http.Server{
