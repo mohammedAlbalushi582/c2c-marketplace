@@ -5,11 +5,22 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { AdminUser, AdminUsersResponse, Category, CategoryField, ListingCard, SearchResponse } from "@/lib/types";
+import {
+  AdminUser,
+  AdminUsersResponse,
+  AppSettings,
+  Category,
+  CategoryField,
+  ContactListResponse,
+  ContactMessage,
+  ListingCard,
+  PresenceResponse,
+  SearchResponse,
+} from "@/lib/types";
 import { formatPrice, statusLabel, statusColor } from "@/lib/format";
 import { Button, Input, Select, Label, Spinner, Badge } from "@/components/ui";
 
-type Tab = "listings" | "users" | "categories";
+type Tab = "listings" | "users" | "categories" | "messages" | "settings" | "presence";
 
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
@@ -38,9 +49,30 @@ export default function AdminPage() {
         <TabBtn active={tab === "categories"} onClick={() => setTab("categories")}>
           الأقسام
         </TabBtn>
+        <TabBtn active={tab === "messages"} onClick={() => setTab("messages")}>
+          الرسائل
+        </TabBtn>
+        <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>
+          التسعير
+        </TabBtn>
+        <TabBtn active={tab === "presence"} onClick={() => setTab("presence")}>
+          المتواجدون الآن
+        </TabBtn>
       </div>
 
-      {tab === "listings" ? <ListingsTab /> : tab === "users" ? <UsersTab meId={user.id} /> : <CategoriesTab />}
+      {tab === "listings" ? (
+        <ListingsTab />
+      ) : tab === "users" ? (
+        <UsersTab meId={user.id} />
+      ) : tab === "categories" ? (
+        <CategoriesTab />
+      ) : tab === "messages" ? (
+        <MessagesTab />
+      ) : tab === "settings" ? (
+        <SettingsTab />
+      ) : (
+        <PresenceTab />
+      )}
     </div>
   );
 }
@@ -705,5 +737,283 @@ function FieldForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+// ---- messages (راسلنا inbox) ----
+
+function MessagesTab() {
+  const [items, setItems] = useState<ContactMessage[]>([]);
+  const [total, setTotal] = useState(0);
+  const [unread, setUnread] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+      const res = await api<ContactListResponse>(`/admin/contact-messages?${qs}`, { auth: true });
+      setItems(res.items || []);
+      setTotal(res.total);
+      setUnread(res.unread);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "تعذّر تحميل الرسائل");
+    } finally {
+      setLoading(false);
+    }
+  }, [page]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function markRead(id: number) {
+    try {
+      await api(`/admin/contact-messages/${id}/read`, { method: "PATCH", auth: true });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "تعذّر التحديث");
+    }
+  }
+
+  async function remove(id: number) {
+    if (!confirm("حذف هذه الرسالة؟")) return;
+    try {
+      await api(`/admin/contact-messages/${id}`, { method: "DELETE", auth: true });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "تعذّر الحذف");
+    }
+  }
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div className="space-y-3">
+      <ErrorBar msg={error} />
+      <div className="text-sm text-slate-500">
+        {total} رسالة
+        {unread > 0 && <span className="mr-2 text-amber-600">· {unread} غير مقروءة</span>}
+      </div>
+
+      {items.length === 0 ? (
+        <div className="card p-10 text-center text-slate-500">لا توجد رسائل.</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((m) => (
+            <div key={m.id} className={`card p-4 ${m.is_read ? "" : "border-amber-200 bg-amber-50/40"}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-800">{m.name}</span>
+                    {!m.is_read && <Badge className="bg-amber-100 text-amber-700">جديدة</Badge>}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {m.phone && <span>{m.phone}</span>}
+                    {m.phone && m.email && <span> · </span>}
+                    {m.email && <span>{m.email}</span>}
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{m.message}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  {m.phone && (
+                    <a href={`https://wa.me/${m.phone.replace(/[^0-9]/g, "")}`} target="_blank" rel="noreferrer">
+                      <Button variant="whatsapp">واتساب</Button>
+                    </a>
+                  )}
+                  {!m.is_read && (
+                    <Button variant="outline" onClick={() => markRead(m.id)}>
+                      تحديد كمقروءة
+                    </Button>
+                  )}
+                  <Button variant="danger" onClick={() => remove(m.id)}>
+                    حذف
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+          <Pager page={page} total={total} size={PAGE_SIZE} onPage={setPage} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- settings (fees + duration) ----
+
+const SETTING_LABELS: { key: string; label: string; hint: string; suffix: string }[] = [
+  { key: "listing_fee_tier2", label: "رسوم الإعلان الثاني", hint: "يُدفع عند نشر الإعلان الثاني", suffix: "ر.ع / شهر" },
+  { key: "listing_fee_tier3_plus", label: "رسوم الإعلان الثالث فأكثر", hint: "لكل إعلان بعد الثاني", suffix: "ر.ع / شهر" },
+  { key: "listing_duration_days", label: "مدة بقاء الإعلان", hint: "المدة قبل انتهاء الإعلان تلقائياً", suffix: "يوم" },
+];
+
+function SettingsTab() {
+  const [form, setForm] = useState<AppSettings>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api<AppSettings>("/admin/settings", { auth: true })
+      .then(setForm)
+      .catch((e) => setError(e instanceof ApiError ? e.message : "تعذّر تحميل الإعدادات"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      const body: AppSettings = {};
+      for (const s of SETTING_LABELS) body[s.key] = String(form[s.key] ?? "");
+      const res = await api<AppSettings>("/admin/settings", { method: "PATCH", auth: true, body });
+      setForm(res);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof ApiError ? "قيمة غير صالحة، تأكد من إدخال أرقام صحيحة." : "تعذّر الحفظ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <Spinner />;
+
+  return (
+    <form onSubmit={save} className="card max-w-lg space-y-4 p-6">
+      <div>
+        <h2 className="font-bold text-slate-800">رسوم نشر الإعلانات</h2>
+        <p className="text-sm text-slate-500">الإعلان الأول لكل مستخدم مجاني. هذه القيم تُطبّق على الإعلانات التالية.</p>
+      </div>
+      <ErrorBar msg={error} />
+      {SETTING_LABELS.map((s) => (
+        <div key={s.key}>
+          <Label>{s.label}</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              step={s.key === "listing_duration_days" ? "1" : "0.001"}
+              min="0"
+              value={form[s.key] ?? ""}
+              onChange={(e) => setForm({ ...form, [s.key]: e.target.value })}
+              required
+            />
+            <span className="whitespace-nowrap text-sm text-slate-500">{s.suffix}</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">{s.hint}</p>
+        </div>
+      ))}
+      <div className="flex items-center gap-3">
+        <Button type="submit" disabled={saving}>
+          {saving ? "جارٍ الحفظ..." : "حفظ الإعدادات"}
+        </Button>
+        {saved && <span className="text-sm text-emerald-600">✓ تم الحفظ</span>}
+      </div>
+    </form>
+  );
+}
+
+// ---- presence (who's online now) ----
+
+function pathLabel(p: string): string {
+  if (!p || p === "/") return "الصفحة الرئيسية";
+  if (p.startsWith("/listings/")) return `يتصفّح إعلاناً (${p.replace("/listings/", "#")})`;
+  if (p.startsWith("/post")) return "يضيف/يعدّل إعلاناً";
+  if (p.startsWith("/dashboard")) return "لوحته الشخصية";
+  if (p.startsWith("/admin")) return "لوحة الإدارة";
+  if (p.startsWith("/contact")) return "صفحة راسلنا";
+  if (p.startsWith("/pay")) return "صفحة الدفع";
+  if (p.startsWith("/login") || p.startsWith("/register")) return "تسجيل الدخول";
+  return p;
+}
+
+function agoLabel(s: number): string {
+  if (s < 5) return "الآن";
+  if (s < 60) return `قبل ${s} ث`;
+  return `قبل ${Math.floor(s / 60)} د`;
+}
+
+function PresenceTab() {
+  const [data, setData] = useState<PresenceResponse | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      setData(await api<PresenceResponse>("/admin/presence", { auth: true }));
+      setError("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "تعذّر تحميل المتواجدين");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Live: refresh every 7 seconds.
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 7000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div className="space-y-4">
+      <ErrorBar msg={error} />
+
+      <div className="flex flex-wrap gap-3">
+        <Stat label="المتواجدون الآن" value={data?.count ?? 0} accent="brand" />
+        <Stat label="مستخدمون" value={data?.users ?? 0} accent="emerald" />
+        <Stat label="زوّار" value={data?.guests ?? 0} accent="slate" />
+      </div>
+
+      {!data || data.visitors.length === 0 ? (
+        <div className="card p-10 text-center text-slate-500">لا يوجد متواجدون في الموقع الآن.</div>
+      ) : (
+        <div className="card divide-y divide-slate-100">
+          {data.visitors.map((v, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 p-3">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="font-semibold text-slate-800">{v.name}</span>
+                {v.is_user ? (
+                  <Badge className="bg-emerald-100 text-emerald-700">مسجّل</Badge>
+                ) : (
+                  <Badge className="bg-slate-100 text-slate-500">زائر</Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-3 text-sm text-slate-500">
+                <span>{pathLabel(v.path)}</span>
+                <span className="text-xs text-slate-400">{agoLabel(v.seconds_ago)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-slate-400">يتحدّث تلقائياً كل ٧ ثوانٍ · يُعتبر الزائر متواجداً لمدة دقيقة من آخر نشاط.</p>
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: number; accent: "brand" | "emerald" | "slate" }) {
+  const colors = {
+    brand: "bg-brand-50 text-brand-700 border-brand-100",
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-100",
+    slate: "bg-slate-50 text-slate-600 border-slate-200",
+  }[accent];
+  return (
+    <div className={`flex-1 rounded-xl border p-4 text-center ${colors}`}>
+      <div className="text-3xl font-black">{value}</div>
+      <div className="text-sm">{label}</div>
+    </div>
   );
 }

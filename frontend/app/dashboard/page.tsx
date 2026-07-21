@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { ListingCard } from "@/lib/types";
+import { ListingCard, CreateListingResponse } from "@/lib/types";
 import { ListingCardView } from "@/components/ListingCard";
+import { daysUntil } from "@/lib/format";
 import { Button, Spinner } from "@/components/ui";
 
 type Tab = "listings" | "favorites";
@@ -83,7 +84,7 @@ export default function DashboardPage() {
       {loading ? (
         <Spinner />
       ) : tab === "listings" ? (
-        <Grid items={mine} showStatus empty="لم تنشر أي إعلان بعد." />
+        <MyGrid items={mine} onChanged={loadAll} empty="لم تنشر أي إعلان بعد." />
       ) : (
         <Grid items={favs} empty="لا توجد إعلانات في المفضلة." />
       )}
@@ -112,6 +113,64 @@ function Grid({ items, showStatus, empty }: { items: ListingCard[]; showStatus?:
       {items.map((i) => (
         <ListingCardView key={i.id} item={i} showStatus={showStatus} />
       ))}
+    </div>
+  );
+}
+
+// MyGrid renders the seller's own listings with per-card actions: pay for a
+// draft awaiting payment, or renew an expired listing.
+function MyGrid({ items, onChanged, empty }: { items: ListingCard[]; onChanged: () => void; empty: string }) {
+  if (items.length === 0) return <div className="card p-10 text-center text-slate-500">{empty}</div>;
+  return (
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {items.map((i) => (
+        <div key={i.id} className="space-y-2">
+          <ListingCardView item={i} showStatus />
+          <MyCardActions item={i} onChanged={onChanged} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MyCardActions({ item, onChanged }: { item: ListingCard; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const payable = item.status === "draft" || item.status === "expired";
+  const left = item.status === "active" ? daysUntil(item.expires_at) : null;
+
+  async function pay() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api<CreateListingResponse>(`/listings/${item.id}/pay`, { method: "POST", auth: true });
+      if (res.payment?.checkout_url) {
+        window.location.href = res.payment.checkout_url;
+        return;
+      }
+      onChanged(); // free (no fee owed) → moved straight to review
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "تعذّر بدء الدفع");
+      setBusy(false);
+    }
+  }
+
+  if (left !== null && left <= 7) {
+    return (
+      <p className="text-center text-xs text-amber-600">
+        {left > 0 ? `ينتهي خلال ${left} يوم` : "منتهٍ"}
+      </p>
+    );
+  }
+  if (!payable) return null;
+
+  return (
+    <div className="space-y-1">
+      <Button variant="outline" className="w-full" onClick={pay} disabled={busy}>
+        {busy ? "..." : item.status === "draft" ? "أكمل الدفع" : "تجديد الإعلان"}
+      </Button>
+      {error && <p className="text-center text-xs text-red-600">{error}</p>}
     </div>
   );
 }

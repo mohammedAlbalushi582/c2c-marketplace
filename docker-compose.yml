@@ -1,4 +1,4 @@
-# Full local stack: Postgres (two DBs) + migrations + Go backend + Next.js frontend + Strapi CMS.
+# Full local stack: Postgres + migrations + Go backend + Next.js frontend.
 #   docker compose up --build
 services:
   postgres:
@@ -7,15 +7,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-alamjad}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alamjad_dev_pw}
       POSTGRES_DB: ${POSTGRES_DB:-alamjad}
-      # Consumed by the init script to create Strapi's separate database.
-      STRAPI_DB_NAME: ${STRAPI_DB_NAME:-strapi}
-      STRAPI_DB_USER: ${STRAPI_DB_USER:-strapi}
-      STRAPI_DB_PASSWORD: ${STRAPI_DB_PASSWORD:-strapi_dev_pw}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alamjad} -d ${POSTGRES_DB:-alamjad}"]
       interval: 5s
@@ -50,6 +45,13 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       PUBLIC_BASE_URL: http://localhost:8080
       UPLOAD_DIR: /app/uploads
+      # Where the browser is sent for payment checkout / return.
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+      # Payment gateway: "stub" (default, simulated) or "thawani".
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
+      THAWANI_BASE_URL: ${THAWANI_BASE_URL:-https://uatcheckout.thawani.om/api/v1}
+      THAWANI_SECRET_KEY: ${THAWANI_SECRET_KEY:-}
+      THAWANI_PUBLISHABLE_KEY: ${THAWANI_PUBLISHABLE_KEY:-}
     ports:
       - "8080:8080"
     volumes:
@@ -65,30 +67,14 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+    environment:
+      # Server-side (SSR/sitemap) reaches the backend inside the compose network.
+      API_INTERNAL_URL: http://backend:8080/api/v1
     depends_on:
       - backend
     ports:
       - "3000:3000"
-
-  # Strapi — static/marketing content only, on its OWN database.
-  # Reads generated secrets (APP_KEYS, *_SALT, *_SECRET) from cms/.env.
-  cms:
-    build: ./cms
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - ./cms/.env
-    environment:
-      DATABASE_CLIENT: postgres
-      DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
-      DATABASE_NAME: ${STRAPI_DB_NAME:-strapi}
-      DATABASE_USERNAME: ${STRAPI_DB_USER:-strapi}
-      DATABASE_PASSWORD: ${STRAPI_DB_PASSWORD:-strapi_dev_pw}
-      DATABASE_SSL: "false"
-    ports:
-      - "1337:1337"
 
 volumes:
   pgdata:

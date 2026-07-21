@@ -15,11 +15,6 @@ out/
 npm-debug.log*
 yarn-error.log*
 
-# Strapi
-/cms/.cache/
-/cms/build/
-/cms/.tmp/
-
 # TLS certs / keys (never commit private keys)
 *.pem
 *.key

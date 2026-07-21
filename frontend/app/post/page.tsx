@@ -2,10 +2,12 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, uploadImage } from "@/lib/api";
+import { api, uploadImage, deleteImage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Category, CategoryField, Location, ListingDetail } from "@/lib/types";
+import { Category, CategoryField, Location, ListingDetail, CreateListingResponse, FeeQuote } from "@/lib/types";
+import { formatOMR } from "@/lib/format";
 import { Button, Input, Textarea, Select, Label, Spinner } from "@/components/ui";
+import { ImageUploader } from "@/components/ImageUploader";
 
 // useSearchParams needs a Suspense boundary during static rendering.
 export default function PostPage() {
@@ -43,6 +45,7 @@ function PostForm() {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [quote, setQuote] = useState<FeeQuote | null>(null);
 
   // Values carried in from the listing being edited, applied once its
   // category's dynamic fields have been fetched.
@@ -61,6 +64,12 @@ function PostForm() {
     api<Category[]>("/categories").then(setCategories).catch(() => {});
     api<Location[]>("/locations").then(setLocations).catch(() => {});
   }, []);
+
+  // Show the seller what this listing will cost before they submit.
+  useEffect(() => {
+    if (isEdit || !user) return;
+    api<FeeQuote>("/me/listing-fee", { auth: true }).then(setQuote).catch(() => setQuote(null));
+  }, [isEdit, user]);
 
   // Load the listing being edited and prefill the form.
   useEffect(() => {
@@ -118,6 +127,19 @@ function PostForm() {
     setAttrs((a) => ({ ...a, [id]: v }));
   }
 
+  // In edit mode, deleting an existing image is immediate (server-side).
+  async function removeExistingImage(imageId: number) {
+    if (!editId) return;
+    const prev = existingImages;
+    setExistingImages((imgs) => imgs.filter((i) => i.id !== imageId)); // optimistic
+    try {
+      await deleteImage(Number(editId), imageId);
+    } catch {
+      setExistingImages(prev); // roll back on failure
+      setError("تعذّر حذف الصورة");
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -145,15 +167,25 @@ function PostForm() {
         attributes,
       };
 
-      const saved = isEdit
-        ? await api<ListingDetail>(`/listings/${editId}`, { method: "PUT", auth: true, body })
-        : await api<ListingDetail>("/listings", { method: "POST", auth: true, body });
-
-      for (let i = 0; i < files.length; i++) {
-        await uploadImage(saved.id, files[i], !isEdit && i === 0);
+      if (isEdit) {
+        const saved = await api<ListingDetail>(`/listings/${editId}`, { method: "PUT", auth: true, body });
+        for (let i = 0; i < files.length; i++) await uploadImage(saved.id, files[i], false);
+        router.push(returnTo);
+        return;
       }
 
-      router.push(isEdit ? returnTo : "/dashboard?posted=1");
+      const res = await api<CreateListingResponse>("/listings", { method: "POST", auth: true, body });
+      for (let i = 0; i < files.length; i++) {
+        await uploadImage(res.listing.id, files[i], i === 0);
+      }
+
+      // Paid listing → off to checkout; the listing is released for review once
+      // the fee is confirmed. Free listing → straight to the dashboard.
+      if (res.payment?.checkout_url) {
+        window.location.href = res.payment.checkout_url;
+        return;
+      }
+      router.push("/dashboard?posted=1");
     } catch (err) {
       setError(
         isEdit
@@ -263,29 +295,50 @@ function PostForm() {
         )}
 
         <div>
-          <Label>{isEdit ? "إضافة صور" : "الصور"}</Label>
-          {existingImages.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {existingImages.map((img) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={img.id} src={img.url} alt="" className="h-16 w-20 rounded-lg object-cover" />
-              ))}
-            </div>
-          )}
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(e) => setFiles(Array.from(e.target.files || []))}
-            className="block w-full text-sm text-slate-500 file:ml-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:text-brand-700"
+          <Label>الصور</Label>
+          <ImageUploader
+            files={files}
+            onFilesChange={setFiles}
+            existing={existingImages}
+            onRemoveExisting={removeExistingImage}
           />
-          {files.length > 0 && <p className="mt-1 text-xs text-slate-500">{files.length} صورة محددة</p>}
+          <p className="mt-2 text-xs text-slate-500">
+            يُفضّل استخدام الوضع الأفقي لصورة الغلاف (الصورة الأولى).
+          </p>
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
-        {!isEdit && <p className="text-xs text-slate-500">سيُراجع إعلانك من قبل الإدارة قبل نشره.</p>}
+        {!isEdit && quote && (
+          <div
+            className={`rounded-lg border p-3 text-sm ${
+              quote.free
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+            }`}
+          >
+            {quote.free ? (
+              <>إعلانك الأول <b>مجاني</b>. سيُراجع من قبل الإدارة قبل نشره.</>
+            ) : (
+              <>
+                رسوم نشر هذا الإعلان: <b>{formatOMR(quote.fee)}</b> لمدة شهر. بعد الدفع يُرسل إعلانك
+                للمراجعة تلقائياً.
+              </>
+            )}
+          </div>
+        )}
+        {!isEdit && !quote && (
+          <p className="text-xs text-slate-500">سيُراجع إعلانك من قبل الإدارة قبل نشره.</p>
+        )}
         <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? (isEdit ? "جارٍ الحفظ..." : "جارٍ النشر...") : isEdit ? "حفظ التعديلات" : "نشر الإعلان"}
+          {submitting
+            ? isEdit
+              ? "جارٍ الحفظ..."
+              : "جارٍ المتابعة..."
+            : isEdit
+            ? "حفظ التعديلات"
+            : quote && !quote.free
+            ? `متابعة الدفع (${formatOMR(quote.fee)})`
+            : "نشر الإعلان"}
         </Button>
       </form>
     </div>

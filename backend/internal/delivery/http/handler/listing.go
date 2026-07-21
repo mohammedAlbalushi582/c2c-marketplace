@@ -14,15 +14,17 @@ import (
 	"github.com/alamjad/marketplace/internal/platform/storage"
 	"github.com/alamjad/marketplace/internal/repository/postgres/sqlc"
 	listinguc "github.com/alamjad/marketplace/internal/usecase/listing"
+	paymentuc "github.com/alamjad/marketplace/internal/usecase/payment"
 )
 
 type ListingHandler struct {
 	svc   *listinguc.Service
 	store storage.Storage
+	pay   *paymentuc.Service
 }
 
-func NewListingHandler(svc *listinguc.Service, store storage.Storage) *ListingHandler {
-	return &ListingHandler{svc: svc, store: store}
+func NewListingHandler(svc *listinguc.Service, store storage.Storage, pay *paymentuc.Service) *ListingHandler {
+	return &ListingHandler{svc: svc, store: store, pay: pay}
 }
 
 func (h *ListingHandler) url(key string) string { return h.store.PublicURL(key) }
@@ -127,6 +129,16 @@ func (req listingRequest) toInput(userID int64) listinguc.CreateInput {
 	}
 }
 
+// createListingResponse wraps the new listing with an optional payment. When
+// the fee is > 0 the listing is created as a draft and `payment.checkout_url`
+// tells the client where to send the seller to pay; the listing enters
+// moderation only after the fee is confirmed. Free listings return payment=null
+// and go straight to 'pending'.
+type createListingResponse struct {
+	Listing ListingDetailDTO `json:"listing"`
+	Payment *paymentDTO      `json:"payment,omitempty"`
+}
+
 func (h *ListingHandler) Create(w http.ResponseWriter, r *http.Request) {
 	u, _ := middleware.UserFromContext(r.Context())
 	var req listingRequest
@@ -138,12 +150,92 @@ func (h *ListingHandler) Create(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, "category_id, title and description are required")
 		return
 	}
-	d, err := h.svc.Create(r.Context(), req.toInput(u.ID))
+
+	quote, err := h.pay.QuoteListingFee(r.Context(), u.ID)
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusCreated, toDetailDTO(d, h.url))
+
+	in := req.toInput(u.ID)
+	if !quote.Free {
+		// Hold as a draft until the fee is paid, so it stays out of the
+		// moderation queue and off the public feed.
+		in.InitialStatus = sqlc.ListingStatusDraft
+	}
+	d, err := h.svc.Create(r.Context(), in)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	resp := createListingResponse{Listing: toDetailDTO(d, h.url)}
+	if !quote.Free {
+		start, err := h.pay.StartListingPayment(r.Context(), u.ID, d.Listing.Listing.ID, quote.Fee, "listing_fee")
+		if err != nil {
+			Error(w, err)
+			return
+		}
+		p := toPaymentDTO(start.Payment, start.CheckoutURL)
+		resp.Payment = &p
+	}
+	JSON(w, http.StatusCreated, resp)
+}
+
+// Pay (re)opens a checkout for a listing the caller owns that is awaiting
+// payment — an abandoned draft ("أكمل الدفع") or an expired listing being
+// renewed ("تجديد"). Returns a fresh checkout URL.
+func (h *ListingHandler) Pay(w http.ResponseWriter, r *http.Request) {
+	u, _ := middleware.UserFromContext(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		BadRequest(w, "invalid listing id")
+		return
+	}
+	d, err := h.svc.Get(r.Context(), id, false)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	l := d.Listing.Listing
+	if l.UserID != u.ID {
+		JSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
+	var purpose string
+	switch l.Status {
+	case sqlc.ListingStatusDraft:
+		purpose = "listing_fee"
+	case sqlc.ListingStatusExpired:
+		purpose = "renewal"
+	default:
+		BadRequest(w, "listing is not awaiting payment")
+		return
+	}
+
+	quote, err := h.pay.QuoteListingFee(r.Context(), u.ID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if quote.Free {
+		// No fee owed — just submit it straight to moderation.
+		if _, err := h.svc.SetStatus(r.Context(), id, "pending"); err != nil {
+			Error(w, err)
+			return
+		}
+		JSON(w, http.StatusOK, createListingResponse{Listing: toDetailDTO(d, h.url)})
+		return
+	}
+
+	start, err := h.pay.StartListingPayment(r.Context(), u.ID, id, quote.Fee, purpose)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	p := toPaymentDTO(start.Payment, start.CheckoutURL)
+	JSON(w, http.StatusOK, createListingResponse{Listing: toDetailDTO(d, h.url), Payment: &p})
 }
 
 func (h *ListingHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +304,28 @@ func (h *ListingHandler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, ImageDTO{ID: img.ID, URL: h.url(img.StorageKey), IsPrimary: img.IsPrimary})
+}
+
+// DeleteImage removes an image from a listing and its stored file.
+func (h *ListingHandler) DeleteImage(w http.ResponseWriter, r *http.Request) {
+	u, _ := middleware.UserFromContext(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		BadRequest(w, "invalid listing id")
+		return
+	}
+	imageID, err := strconv.ParseInt(chi.URLParam(r, "imageId"), 10, 64)
+	if err != nil {
+		BadRequest(w, "invalid image id")
+		return
+	}
+	key, err := h.svc.DeleteImage(r.Context(), actorOf(u), id, imageID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	_ = h.store.Delete(r.Context(), key)
+	JSON(w, http.StatusNoContent, nil)
 }
 
 // ---- current user ----

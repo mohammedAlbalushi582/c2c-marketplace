@@ -107,6 +107,7 @@ type ListingCardDTO struct {
 	Status         string     `json:"status"`
 	IsFeatured     bool       `json:"is_featured"`
 	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 }
 
 type ImageDTO struct {
@@ -116,13 +117,13 @@ type ImageDTO struct {
 }
 
 type AttributeDTO struct {
-	FieldID   int64  `json:"field_id"`
-	FieldKey  string `json:"field_key"`
-	LabelAr   string `json:"label_ar"`
-	FieldType string `json:"field_type"`
+	FieldID   int64   `json:"field_id"`
+	FieldKey  string  `json:"field_key"`
+	LabelAr   string  `json:"label_ar"`
+	FieldType string  `json:"field_type"`
 	Unit      *string `json:"unit"`
-	Value     any    `json:"value"`
-	RawValue  any    `json:"raw_value"`
+	Value     any     `json:"value"`
+	RawValue  any     `json:"raw_value"`
 }
 
 type ListingDetailDTO struct {
@@ -160,8 +161,8 @@ func toDetailDTO(d *listing.Detail, url urlFn) ListingDetailDTO {
 		WhatsappNumber: l.WhatsappNumber, Status: string(l.Status), ViewsCount: l.ViewsCount,
 		CategoryID: l.CategoryID, LocationID: l.LocationID, CategorySlug: d.Listing.CategorySlug,
 		CategoryNameAr: d.Listing.CategoryNameAr, LocationNameAr: d.Listing.LocationNameAr,
-		CreatedAt: l.CreatedAt,
-		Images:    make([]ImageDTO, 0, len(d.Images)),
+		CreatedAt:  l.CreatedAt,
+		Images:     make([]ImageDTO, 0, len(d.Images)),
 		Attributes: make([]AttributeDTO, 0, len(d.Attributes)),
 	}
 	for _, img := range d.Images {
@@ -265,7 +266,7 @@ func cardFromUserRow(r sqlc.ListListingsByUserRow, url urlFn) ListingCardDTO {
 	c := ListingCardDTO{
 		ID: r.ID, Title: r.Title, Slug: r.Slug, Price: pgutil.NumericToFloatPtr(r.Price),
 		Currency: r.Currency, PriceType: string(r.PriceType), Status: string(r.Status),
-		IsFeatured: r.IsFeatured, CreatedAt: r.CreatedAt,
+		IsFeatured: r.IsFeatured, CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt,
 	}
 	c.PrimaryImage = imageURL(r.PrimaryImage, url)
 	return c

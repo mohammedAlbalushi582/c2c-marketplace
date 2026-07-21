@@ -67,6 +67,7 @@ export interface ListingCard {
   status: string;
   is_featured: boolean;
   created_at: string;
+  expires_at?: string | null;
 }
 
 export interface ListingImage {
@@ -134,4 +135,67 @@ export interface AdminUsersResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+// ---- payments / fees ----
+
+export interface FeeQuote {
+  fee: number;
+  currency: string;
+  tier: number;
+  live_count: number;
+  free: boolean;
+}
+
+export interface PaymentInfo {
+  id: number;
+  amount: number;
+  currency: string;
+  status: string;
+  purpose: string;
+  checkout_url?: string;
+}
+
+/** Response of POST /listings and POST /listings/{id}/pay. */
+export interface CreateListingResponse {
+  listing: ListingDetail;
+  payment?: PaymentInfo | null;
+}
+
+// ---- contact (راسلنا) ----
+
+export interface ContactMessage {
+  id: number;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface ContactListResponse {
+  items: ContactMessage[];
+  total: number;
+  unread: number;
+  page: number;
+  page_size: number;
+}
+
+export type AppSettings = Record<string, string>;
+
+// ---- live presence (who's online) ----
+
+export interface PresenceVisitor {
+  name: string;
+  is_user: boolean;
+  path: string;
+  seconds_ago: number;
+}
+
+export interface PresenceResponse {
+  count: number;
+  users: number;
+  guests: number;
+  visitors: PresenceVisitor[];
 }

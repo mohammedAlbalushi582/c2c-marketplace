@@ -38,6 +38,17 @@ export function Header() {
         </Link>
 
         <nav className="flex items-center gap-2">
+          <Link
+            href="/contact"
+            title="راسلنا"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m3 7 9 6 9-6" />
+            </svg>
+            <span className="hidden sm:inline">راسلنا</span>
+          </Link>
           {user ? (
             <>
               {user.role === "admin" && (

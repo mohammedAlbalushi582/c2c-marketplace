@@ -203,6 +203,20 @@ func (q *Queries) CountListings(ctx context.Context, arg CountListingsParams) (i
 	return count, err
 }
 
+const countLiveListingsByUser = `-- name: CountLiveListingsByUser :one
+SELECT count(*) FROM listings
+WHERE user_id = $1 AND deleted_at IS NULL
+  AND status IN ('pending', 'active')
+`
+
+// Listings that currently occupy a slot (queued or published) — drives the fee tier.
+func (q *Queries) CountLiveListingsByUser(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveListingsByUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createListing = `-- name: CreateListing :one
 INSERT INTO listings
     (user_id, category_id, location_id, title, slug, description, price, currency,
@@ -286,6 +300,22 @@ DELETE FROM listing_images WHERE id = $1
 func (q *Queries) DeleteListingImage(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteListingImage, id)
 	return err
+}
+
+const expireDueListings = `-- name: ExpireDueListings :execrows
+UPDATE listings
+SET status = 'expired'
+WHERE status = 'active' AND deleted_at IS NULL
+  AND expires_at IS NOT NULL AND expires_at < now()
+`
+
+// Sweeper: retire active listings whose month is up.
+func (q *Queries) ExpireDueListings(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, expireDueListings)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getListingByID = `-- name: GetListingByID :one
@@ -668,6 +698,44 @@ func (q *Queries) SoftDeleteListing(ctx context.Context, id int64) error {
 	return err
 }
 
+const submitListingForReview = `-- name: SubmitListingForReview :one
+UPDATE listings
+SET status = 'pending'
+WHERE id = $1 AND deleted_at IS NULL AND status IN ('draft', 'expired')
+RETURNING id, user_id, category_id, location_id, title, slug, description, price, currency, price_type, contact_phone, whatsapp_number, status, is_featured, featured_until, views_count, published_at, expires_at, created_at, updated_at, deleted_at
+`
+
+// Moves a listing into the moderation queue once its fee is paid (new draft or
+// an expired listing being renewed).
+func (q *Queries) SubmitListingForReview(ctx context.Context, id int64) (Listing, error) {
+	row := q.db.QueryRow(ctx, submitListingForReview, id)
+	var i Listing
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CategoryID,
+		&i.LocationID,
+		&i.Title,
+		&i.Slug,
+		&i.Description,
+		&i.Price,
+		&i.Currency,
+		&i.PriceType,
+		&i.ContactPhone,
+		&i.WhatsappNumber,
+		&i.Status,
+		&i.IsFeatured,
+		&i.FeaturedUntil,
+		&i.ViewsCount,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const updateListing = `-- name: UpdateListing :one
 UPDATE listings
 SET category_id = $2, location_id = $3, title = $4, slug = $5, description = $6,
@@ -732,18 +800,23 @@ func (q *Queries) UpdateListing(ctx context.Context, arg UpdateListingParams) (L
 const updateListingStatus = `-- name: UpdateListingStatus :one
 UPDATE listings
 SET status = $2,
-    published_at = CASE WHEN $2 = 'active'::listing_status AND published_at IS NULL THEN now() ELSE published_at END
+    published_at = CASE WHEN $2 = 'active'::listing_status AND published_at IS NULL THEN now() ELSE published_at END,
+    expires_at = CASE WHEN $2 = 'active'::listing_status
+                      THEN now() + ($3::int * interval '1 day')
+                      ELSE expires_at END
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, user_id, category_id, location_id, title, slug, description, price, currency, price_type, contact_phone, whatsapp_number, status, is_featured, featured_until, views_count, published_at, expires_at, created_at, updated_at, deleted_at
 `
 
 type UpdateListingStatusParams struct {
-	ID     int64         `json:"id"`
-	Status ListingStatus `json:"status"`
+	ID           int64         `json:"id"`
+	Status       ListingStatus `json:"status"`
+	DurationDays int32         `json:"duration_days"`
 }
 
+// On activation, stamp published_at (once) and (re)set the expiry window.
 func (q *Queries) UpdateListingStatus(ctx context.Context, arg UpdateListingStatusParams) (Listing, error) {
-	row := q.db.QueryRow(ctx, updateListingStatus, arg.ID, arg.Status)
+	row := q.db.QueryRow(ctx, updateListingStatus, arg.ID, arg.Status, arg.DurationDays)
 	var i Listing
 	err := row.Scan(
 		&i.ID,

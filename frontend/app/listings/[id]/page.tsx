@@ -1,13 +1,16 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { api, ApiError } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { serverFetch, SITE_URL } from "@/lib/server-api";
 import { ListingDetail, ListingAttribute } from "@/lib/types";
-import { formatPrice, statusLabel, statusColor } from "@/lib/format";
-import { Button, Spinner, Badge } from "@/components/ui";
+import { formatPrice } from "@/lib/format";
+import { Badge, Button } from "@/components/ui";
+import { Gallery } from "@/components/listing/Gallery";
+import { FavoriteButton } from "@/components/listing/FavoriteButton";
+import { ManageCard } from "@/components/listing/ManageCard";
+
+function getListing(id: string) {
+  return serverFetch<ListingDetail>(`/listings/${id}`);
+}
 
 function renderAttrValue(a: ListingAttribute): string {
   if (a.value === null || a.value === undefined) return "-";
@@ -16,100 +19,61 @@ function renderAttrValue(a: ListingAttribute): string {
   return String(a.value) + (a.unit ? ` ${a.unit}` : "");
 }
 
-export default function ListingDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
-  const router = useRouter();
-  const [listing, setListing] = useState<ListingDetail | null>(null);
-  const [activeImg, setActiveImg] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [fav, setFav] = useState(false);
-  const [modError, setModError] = useState("");
+// generateMetadata + the page fetch the same URL; Next dedupes it into one call.
+export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+  const l = await getListing(params.id);
+  if (!l) return { title: "إعلان غير موجود", robots: { index: false } };
+  const description = l.description.replace(/\s+/g, " ").trim().slice(0, 160);
+  const images = l.images[0]?.url ? [l.images[0].url] : [];
+  return {
+    title: l.title,
+    description,
+    alternates: { canonical: `/listings/${l.id}` },
+    openGraph: {
+      title: l.title,
+      description,
+      url: `${SITE_URL}/listings/${l.id}`,
+      type: "article",
+      images,
+    },
+    twitter: { card: "summary_large_image", title: l.title, description, images },
+  };
+}
 
-  useEffect(() => {
-    api<ListingDetail>(`/listings/${id}`)
-      .then(setListing)
-      .finally(() => setLoading(false));
-  }, [id]);
-
-  async function toggleFav() {
-    if (!user) {
-      window.location.href = "/login";
-      return;
-    }
-    try {
-      if (fav) {
-        await api(`/listings/${id}/favorite`, { method: "DELETE", auth: true });
-      } else {
-        await api(`/listings/${id}/favorite`, { method: "POST", auth: true });
-      }
-      setFav(!fav);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function setStatus(status: string) {
-    setModError("");
-    try {
-      await api(`/admin/listings/${id}/status`, { method: "PATCH", auth: true, body: { status } });
-      setListing((l) => (l ? { ...l, status } : l));
-    } catch (e) {
-      setModError(e instanceof ApiError ? e.message : "تعذّر تحديث الحالة");
-    }
-  }
-
-  async function remove() {
-    if (!confirm("حذف هذا الإعلان؟ لن يظهر بعد الآن في الموقع.")) return;
-    setModError("");
-    try {
-      await api(`/listings/${id}`, { method: "DELETE", auth: true });
-      router.push(isAdmin ? "/admin" : "/dashboard");
-    } catch (e) {
-      setModError(e instanceof ApiError ? e.message : "تعذّر حذف الإعلان");
-    }
-  }
-
-  if (loading) return <Spinner />;
-  if (!listing)
-    return <div className="card p-12 text-center text-slate-500">لم يتم العثور على الإعلان</div>;
+export default async function ListingDetailPage({ params }: { params: { id: string } }) {
+  const listing = await getListing(params.id);
+  if (!listing) notFound();
 
   const wa = listing.whatsapp_number?.replace(/[^0-9]/g, "");
   const phone = listing.contact_phone;
-  const isAdmin = user?.role === "admin";
-  const isOwner = user?.id === listing.user_id;
-  const canManage = isAdmin || isOwner;
+
+  // Product structured data so Google can show a rich result.
+  const jsonLd: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: listing.title,
+    description: listing.description,
+    image: listing.images.map((i) => i.url),
+    category: listing.category_name_ar,
+    url: `${SITE_URL}/listings/${listing.id}`,
+  };
+  if (listing.price !== null && listing.price_type !== "on_request") {
+    jsonLd.offers = {
+      "@type": "Offer",
+      price: listing.price,
+      priceCurrency: listing.currency || "OMR",
+      availability: listing.status === "active" ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      url: `${SITE_URL}/listings/${listing.id}`,
+    };
+  }
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+
       {/* Main */}
       <div className="space-y-4">
-        <div className="card overflow-hidden">
-          <div className="aspect-[16/10] bg-slate-100">
-            {listing.images.length > 0 ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={listing.images[activeImg].url} alt={listing.title} className="h-full w-full object-cover" />
-            ) : (
-              <div className="grid h-full place-items-center text-slate-300">لا توجد صور</div>
-            )}
-          </div>
-          {listing.images.length > 1 && (
-            <div className="flex gap-2 overflow-x-auto p-3">
-              {listing.images.map((img, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={img.id}
-                  src={img.url}
-                  alt=""
-                  onClick={() => setActiveImg(i)}
-                  className={`h-16 w-20 flex-shrink-0 cursor-pointer rounded-lg object-cover ${
-                    i === activeImg ? "ring-2 ring-brand-500" : ""
-                  }`}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        <Gallery images={listing.images} title={listing.title} />
 
         <div className="card p-5">
           <div className="flex items-start justify-between gap-3">
@@ -142,43 +106,7 @@ export default function ListingDetailPage() {
 
       {/* Contact sidebar */}
       <aside className="space-y-3">
-        {/* Moderation / owner controls */}
-        {canManage && (
-          <div className="card space-y-3 p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-800">{isAdmin ? "إدارة الإعلان" : "إعلانك"}</h2>
-              <Badge className={statusColor(listing.status)}>{statusLabel(listing.status)}</Badge>
-            </div>
-
-            {isAdmin && (
-              <div className="flex gap-2">
-                {listing.status !== "active" && (
-                  <Button className="flex-1" onClick={() => setStatus("active")}>
-                    موافقة
-                  </Button>
-                )}
-                {listing.status !== "rejected" && (
-                  <Button variant="outline" className="flex-1" onClick={() => setStatus("rejected")}>
-                    رفض
-                  </Button>
-                )}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Link href={`/post?edit=${listing.id}&from=/listings/${listing.id}`} className="flex-1">
-                <Button variant="outline" className="w-full">
-                  تعديل
-                </Button>
-              </Link>
-              <Button variant="danger" className="flex-1" onClick={remove}>
-                حذف
-              </Button>
-            </div>
-
-            {modError && <p className="text-sm text-red-600">{modError}</p>}
-          </div>
-        )}
+        <ManageCard id={listing.id} userId={listing.user_id} initialStatus={listing.status} />
 
         <div className="card space-y-3 p-5">
           <h2 className="font-bold text-slate-800">تواصل مع المعلن</h2>
@@ -197,13 +125,10 @@ export default function ListingDetailPage() {
             </a>
           )}
           {!wa && !phone && <p className="text-sm text-slate-500">لا تتوفر معلومات تواصل.</p>}
-          <Button variant="ghost" onClick={toggleFav} className="w-full">
-            {fav ? "★ في المفضلة" : "☆ أضف للمفضلة"}
-          </Button>
+          <FavoriteButton id={listing.id} />
         </div>
-        <div className="card p-4 text-center text-xs text-slate-400">
-          👁 {listing.views_count} مشاهدة
-        </div>
+
+        <div className="card p-4 text-center text-xs text-slate-400">👁 {listing.views_count} مشاهدة</div>
       </aside>
     </div>
   );

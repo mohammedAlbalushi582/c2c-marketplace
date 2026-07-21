@@ -217,6 +217,70 @@ func AllLocationTypeValues() []LocationType {
 	}
 }
 
+type PaymentStatus string
+
+const (
+	PaymentStatusPending  PaymentStatus = "pending"
+	PaymentStatusPaid     PaymentStatus = "paid"
+	PaymentStatusFailed   PaymentStatus = "failed"
+	PaymentStatusCanceled PaymentStatus = "canceled"
+)
+
+func (e *PaymentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PaymentStatus(s)
+	case string:
+		*e = PaymentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PaymentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullPaymentStatus struct {
+	PaymentStatus PaymentStatus `json:"payment_status"`
+	Valid         bool          `json:"valid"` // Valid is true if PaymentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPaymentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.PaymentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PaymentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPaymentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PaymentStatus), nil
+}
+
+func (e PaymentStatus) Valid() bool {
+	switch e {
+	case PaymentStatusPending,
+		PaymentStatusPaid,
+		PaymentStatusFailed,
+		PaymentStatusCanceled:
+		return true
+	}
+	return false
+}
+
+func AllPaymentStatusValues() []PaymentStatus {
+	return []PaymentStatus{
+		PaymentStatusPending,
+		PaymentStatusPaid,
+		PaymentStatusFailed,
+		PaymentStatusCanceled,
+	}
+}
+
 type PriceType string
 
 const (
@@ -458,6 +522,12 @@ func AllUserStatusValues() []UserStatus {
 	}
 }
 
+type AppSetting struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type AuthProvider struct {
 	ID             int64     `json:"id"`
 	UserID         int64     `json:"user_id"`
@@ -493,6 +563,16 @@ type CategoryField struct {
 	DisplayOrder int32     `json:"display_order"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type ContactMessage struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Phone     *string   `json:"phone"`
+	Email     *string   `json:"email"`
+	Message   string    `json:"message"`
+	IsRead    bool      `json:"is_read"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Favorite struct {
@@ -554,6 +634,22 @@ type Location struct {
 	NameEn    *string      `json:"name_en"`
 	Slug      string       `json:"slug"`
 	CreatedAt time.Time    `json:"created_at"`
+}
+
+type Payment struct {
+	ID              int64          `json:"id"`
+	UserID          int64          `json:"user_id"`
+	ListingID       *int64         `json:"listing_id"`
+	Purpose         string         `json:"purpose"`
+	Amount          pgtype.Numeric `json:"amount"`
+	Currency        string         `json:"currency"`
+	Status          PaymentStatus  `json:"status"`
+	Provider        string         `json:"provider"`
+	ProviderRef     *string        `json:"provider_ref"`
+	ProviderPayload []byte         `json:"provider_payload"`
+	PaidAt          *time.Time     `json:"paid_at"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 type Report struct {

@@ -19,6 +19,12 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       UPLOAD_DIR: /app/uploads
+      # Payments: buyers are sent to the public site for checkout/return.
+      FRONTEND_BASE_URL: ${PUBLIC_BASE_URL}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
+      THAWANI_BASE_URL: ${THAWANI_BASE_URL:-https://checkout.thawani.om/api/v1}
+      THAWANI_SECRET_KEY: ${THAWANI_SECRET_KEY:-}
+      THAWANI_PUBLISHABLE_KEY: ${THAWANI_PUBLISHABLE_KEY:-}
     ports: !reset []          # fronted by nginx
     restart: unless-stopped
 
@@ -28,14 +34,13 @@ services:
       args:
         # Relative path -> the browser calls the same origin; nginx proxies /api to backend.
         NEXT_PUBLIC_API_URL: /api/v1
+        # Your public HTTPS domain — canonical URLs, Open Graph, sitemap.
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_BASE_URL}
+        NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
+    environment:
+      # SSR/sitemap reach the backend directly inside the network.
+      API_INTERNAL_URL: http://backend:8080/api/v1
     ports: !reset []          # fronted by nginx
-    restart: unless-stopped
-
-  cms:
-    # Strapi admin is not public; reach it via SSH tunnel:
-    #   ssh -L 1337:localhost:1337 root@your-server  ->  http://localhost:1337/admin
-    ports: !override
-      - "127.0.0.1:1337:1337"
     restart: unless-stopped
 
   nginx:

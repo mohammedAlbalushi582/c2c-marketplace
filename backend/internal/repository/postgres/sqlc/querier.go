@@ -19,24 +19,36 @@ type Querier interface {
 	AdminSetUserRole(ctx context.Context, arg AdminSetUserRoleParams) (User, error)
 	AdminSetUserStatus(ctx context.Context, arg AdminSetUserStatusParams) (User, error)
 	CountAdmins(ctx context.Context) (int64, error)
+	CountContactMessages(ctx context.Context) (int64, error)
 	CountListings(ctx context.Context, arg CountListingsParams) (int64, error)
+	// Listings that currently occupy a slot (queued or published) — drives the fee tier.
+	CountLiveListingsByUser(ctx context.Context, userID int64) (int64, error)
+	CountUnreadContactMessages(ctx context.Context) (int64, error)
 	CountUsers(ctx context.Context, arg CountUsersParams) (int64, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
 	CreateCategoryField(ctx context.Context, arg CreateCategoryFieldParams) (CategoryField, error)
+	CreateContactMessage(ctx context.Context, arg CreateContactMessageParams) (ContactMessage, error)
 	CreateListing(ctx context.Context, arg CreateListingParams) (Listing, error)
+	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
 	CreateReport(ctx context.Context, arg CreateReportParams) (Report, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteAttributesByListing(ctx context.Context, listingID int64) error
 	DeleteCategory(ctx context.Context, id int64) error
 	DeleteCategoryField(ctx context.Context, id int64) error
+	DeleteContactMessage(ctx context.Context, id int64) error
 	DeleteListingImage(ctx context.Context, id int64) error
+	// Sweeper: retire active listings whose month is up.
+	ExpireDueListings(ctx context.Context) (int64, error)
 	GetCategoryByID(ctx context.Context, id int64) (Category, error)
 	GetCategoryBySlug(ctx context.Context, slug string) (Category, error)
 	GetListingByID(ctx context.Context, id int64) (GetListingByIDRow, error)
 	GetListingImage(ctx context.Context, id int64) (ListingImage, error)
 	GetLocationByID(ctx context.Context, id int64) (Location, error)
+	GetPayment(ctx context.Context, id int64) (Payment, error)
+	GetPaymentByProviderRef(ctx context.Context, providerRef *string) (Payment, error)
 	GetSessionByTokenHash(ctx context.Context, refreshTokenHash string) (Session, error)
+	GetSetting(ctx context.Context, key string) (string, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserByUsername(ctx context.Context, username *string) (User, error)
@@ -45,26 +57,40 @@ type Querier interface {
 	ListAllCategories(ctx context.Context) ([]Category, error)
 	ListAttributesByListing(ctx context.Context, listingID int64) ([]ListAttributesByListingRow, error)
 	ListCategories(ctx context.Context) ([]Category, error)
+	ListContactMessages(ctx context.Context, arg ListContactMessagesParams) ([]ContactMessage, error)
 	ListFavoritesByUser(ctx context.Context, userID int64) ([]ListFavoritesByUserRow, error)
 	ListFieldsByCategory(ctx context.Context, categoryID int64) ([]CategoryField, error)
 	ListGovernorates(ctx context.Context) ([]Location, error)
 	ListImagesByListing(ctx context.Context, listingID int64) ([]ListingImage, error)
 	ListListingsByUser(ctx context.Context, userID int64) ([]ListListingsByUserRow, error)
 	ListLocations(ctx context.Context) ([]Location, error)
+	ListPaymentsByUser(ctx context.Context, userID int64) ([]Payment, error)
 	// Resolve fields for a category AND all its ancestors (inherited attributes).
 	ListResolvedFieldsForCategory(ctx context.Context, id int64) ([]CategoryField, error)
+	ListSettings(ctx context.Context) ([]AppSetting, error)
 	ListWilayatsByGovernorate(ctx context.Context, parentID *int64) ([]Location, error)
+	MarkContactMessageRead(ctx context.Context, id int64) error
+	MarkPaymentFailed(ctx context.Context, arg MarkPaymentFailedParams) error
+	// Idempotent: only a still-pending payment transitions to paid.
+	MarkPaymentPaid(ctx context.Context, arg MarkPaymentPaidParams) (Payment, error)
 	RemoveFavorite(ctx context.Context, arg RemoveFavoriteParams) error
 	RevokeAllUserSessions(ctx context.Context, userID int64) error
 	RevokeSession(ctx context.Context, refreshTokenHash string) error
 	SearchListings(ctx context.Context, arg SearchListingsParams) ([]SearchListingsRow, error)
+	// Records the gateway session/checkout id after a checkout is created.
+	SetPaymentCheckout(ctx context.Context, arg SetPaymentCheckoutParams) (Payment, error)
 	SoftDeleteListing(ctx context.Context, id int64) error
+	// Moves a listing into the moderation queue once its fee is paid (new draft or
+	// an expired listing being renewed).
+	SubmitListingForReview(ctx context.Context, id int64) (Listing, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdateListing(ctx context.Context, arg UpdateListingParams) (Listing, error)
+	// On activation, stamp published_at (once) and (re)set the expiry window.
 	UpdateListingStatus(ctx context.Context, arg UpdateListingStatusParams) (Listing, error)
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error)
 	// ---- attributes (EAV) ----
 	UpsertListingAttribute(ctx context.Context, arg UpsertListingAttributeParams) error
+	UpsertSetting(ctx context.Context, arg UpsertSettingParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -12,6 +12,12 @@ COPY . .
 # NEXT_PUBLIC_* is baked at build time; the browser calls the API on the host.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# Public site origin (for canonical URLs, Open Graph, sitemap) + optional
+# Google Search Console verification token.
+ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION=
+ENV NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION=$NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
 RUN npm run build
 
 # ---- runtime (standalone) ----

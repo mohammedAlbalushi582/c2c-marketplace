@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -59,7 +60,15 @@ type CreateInput struct {
 	ContactPhone   *string
 	WhatsappNumber *string
 	Attributes     []AttributeInput
+	// InitialStatus is the status the listing starts in. Empty defaults to
+	// 'pending' (free listings enter moderation directly); paid listings start
+	// as 'draft' and are promoted to 'pending' once their fee is paid.
+	InitialStatus sqlc.ListingStatus
 }
+
+// defaultListingDurationDays is the fallback active window when the
+// listing_duration_days setting is missing/invalid.
+const defaultListingDurationDays = 30
 
 // Detail is the full listing view returned for detail pages.
 type Detail struct {
@@ -97,6 +106,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Detail, error) {
 	if !pt.Valid() {
 		pt = sqlc.PriceTypeFixed
 	}
+	status := in.InitialStatus
+	if !status.Valid() {
+		status = sqlc.ListingStatusPending
+	}
 	slug := ptr(slugify(in.Title))
 
 	var created sqlc.Listing
@@ -113,7 +126,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Detail, error) {
 			PriceType:      pt,
 			ContactPhone:   in.ContactPhone,
 			WhatsappNumber: in.WhatsappNumber,
-			Status:         sqlc.ListingStatusPending,
+			Status:         status,
 		})
 		if err != nil {
 			return err
@@ -272,17 +285,41 @@ func (s *Service) AdminList(ctx context.Context, status, keyword string, limit, 
 	return &AdminListResult{Items: items, Total: total}, nil
 }
 
-// SetStatus is the admin moderation action (approve/reject/etc.).
+// SetStatus is the admin moderation action (approve/reject/etc.). Approving a
+// listing ('active') stamps its month-long expiry window from settings.
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) (sqlc.Listing, error) {
 	st := sqlc.ListingStatus(status)
 	if !st.Valid() {
 		return sqlc.Listing{}, domain.ErrInvalidInput
 	}
-	l, err := s.store.UpdateListingStatus(ctx, sqlc.UpdateListingStatusParams{ID: id, Status: st})
+	l, err := s.store.UpdateListingStatus(ctx, sqlc.UpdateListingStatusParams{
+		ID:           id,
+		Status:       st,
+		DurationDays: s.durationDays(ctx),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sqlc.Listing{}, domain.ErrNotFound
 	}
 	return l, err
+}
+
+// ExpireDue retires active listings whose month is up. Returns how many were
+// expired. Run periodically by a background sweeper.
+func (s *Service) ExpireDue(ctx context.Context) (int64, error) {
+	return s.store.ExpireDueListings(ctx)
+}
+
+// durationDays reads the admin-configured active window, falling back to 30.
+func (s *Service) durationDays(ctx context.Context) int32 {
+	v, err := s.store.GetSetting(ctx, "listing_duration_days")
+	if err != nil {
+		return defaultListingDurationDays
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return defaultListingDurationDays
+	}
+	return int32(n)
 }
 
 // AddImage attaches an uploaded image to a listing the actor owns (or any
@@ -297,6 +334,24 @@ func (s *Service) AddImage(ctx context.Context, actor Actor, listingID int64, st
 		IsPrimary:    isPrimary,
 		DisplayOrder: order,
 	})
+}
+
+// DeleteImage removes an image from a listing the actor owns (or any, if admin)
+// and returns its storage key so the caller can delete the underlying file.
+func (s *Service) DeleteImage(ctx context.Context, actor Actor, listingID, imageID int64) (string, error) {
+	if err := s.assertCanManage(ctx, actor, listingID); err != nil {
+		return "", err
+	}
+	img, err := s.store.GetListingImage(ctx, imageID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && img.ListingID != listingID) {
+		return "", domain.ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	if err := s.store.DeleteListingImage(ctx, imageID); err != nil {
+		return "", err
+	}
+	return img.StorageKey, nil
 }
 
 // ---- favorites ----

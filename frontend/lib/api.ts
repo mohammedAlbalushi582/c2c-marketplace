@@ -71,4 +71,8 @@ export async function uploadImage(listingId: number, file: File, isPrimary: bool
   return api(`/listings/${listingId}/images`, { method: "POST", auth: true, raw: form });
 }
 
+export async function deleteImage(listingId: number, imageId: number) {
+  return api(`/listings/${listingId}/images/${imageId}`, { method: "DELETE", auth: true });
+}
+
 export { API_URL };

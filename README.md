@@ -8,7 +8,6 @@ sales, for an Arabic-speaking (RTL) audience in Oman.
 |-------|------|
 | Backend | Go 1.26 · chi · pgx/pgxpool · sqlc · golang-migrate · JWT · bcrypt |
 | Frontend | Next.js 14 (App Router, standalone) · Tailwind · RTL Arabic |
-| CMS | Strapi 5 (own Postgres DB) — static/marketing content only |
 | DB | PostgreSQL 16 |
 | Infra | Docker Compose |
 
@@ -16,16 +15,14 @@ sales, for an Arabic-speaking (RTL) audience in Oman.
 ```
 backend/      Go API — clean architecture (domain/usecase/repository/delivery)
 frontend/     Next.js 14 RTL app
-cms/          Strapi 5 (separate database)
 migrations/   golang-migrate raw SQL (up/down) + seed + demo content
-deploy/       Postgres init (creates Strapi's separate DB)
+deploy/       nginx TLS reverse proxy (production)
 docker-compose.yml
 ```
 
 ## Run the whole thing
 ```bash
 cp .env.example .env
-cd cms && cp .env.example .env 2>/dev/null || true; cd ..   # Strapi secrets (generated on scaffold)
 
 docker compose up --build
 ```
@@ -36,7 +33,6 @@ Then open:
 | **Frontend** | http://localhost:3000 | the marketplace |
 | Backend API | http://localhost:8080/api/v1 | REST, versioned |
 | Health | http://localhost:8080/healthz | |
-| Strapi admin | http://localhost:1337/admin | create the first admin on load |
 
 Migrations (schema + seed + demo listings) run automatically via the `migrate` service.
 
@@ -66,10 +62,15 @@ GET    /locations
 GET    /listings (search+filter) GET  /listings/{id}
 POST   /listings                 PUT  /listings/{id}       DELETE /listings/{id}
 POST   /listings/{id}/images     POST/DELETE /listings/{id}/favorite
-GET    /me/listings              GET  /me/favorites
+POST   /listings/{id}/pay        # (re)start checkout for a draft/expired listing
+GET    /me/listings              GET  /me/favorites        GET /me/listing-fee
+GET    /payments/{id}            POST /payments/{id}/verify
+POST   /contact                  # راسلنا (public)
 # admin
 GET    /admin/listings?status=pending      PATCH /admin/listings/{id}/status
 POST   /admin/categories ...               POST  /admin/categories/{id}/fields
+GET    /admin/contact-messages   PATCH /admin/contact-messages/{id}/read  DELETE .../{id}
+GET    /admin/settings           PATCH /admin/settings     # fee tiers + duration
 ```
 
 ## Database schema (8 migrations)
@@ -83,6 +84,7 @@ POST   /admin/categories ...               POST  /admin/categories/{id}/fields
 | 6 | favorites_reports | `favorites`, `reports` |
 | 7 | seed | 2 categories + custom fields + Oman locations |
 | 8 | demo_content | demo users + 6 active listings with attributes |
+| 9 | payments_contact_settings | `payments`, `contact_messages`, `app_settings` (fee tiers + duration) |
 
 Design highlights:
 - **Extensible categories** — admin adds subcategories + per-category custom fields; a leaf
@@ -91,12 +93,17 @@ Design highlights:
 - **JWT auth** — stateless access tokens + hashed refresh tokens (rotated on use); Phase-2
   OAuth SSO drops into `auth_providers` with no schema change.
 - **Moderation** — new listings start `pending`; an admin approves to `active`.
-- **No messaging in v1** — contact via `contact_phone` / WhatsApp; a `messages` table can be
-  added later without touching existing tables.
+- **Paid listings** — a seller's **first** listing is free; the 2nd costs **2 OMR/month** and the
+  3rd+ **5 OMR/month** (tiers editable by the admin under **التسعير**). Paid listings are held as
+  `draft` until the fee is paid, then enter moderation. Approved listings last **one month**
+  (`expires_at`), after which a background sweeper marks them `expired`; the seller can **renew**
+  by paying again. Payments go through a swappable `payment.Provider` — a dev **stub** (simulated)
+  by default, or **Thawani Pay** by setting `PAYMENT_PROVIDER=thawani` + keys (no code change).
+- **Contact the owner** — a public **راسلنا** form (`/contact`) saved to `contact_messages`; the
+  admin reads them in the **الرسائل** inbox tab.
 
 ## Notes
-- Strapi runs on a **separate `strapi` database** (created by `deploy/postgres/init` on a fresh
-  volume). For a clean slate: `docker compose down -v && docker compose up --build`.
+- For a clean slate (wipe the DB volume): `docker compose down -v && docker compose up --build`.
 - File uploads use local storage behind a `Storage` interface (`backend/.../platform/storage`),
   swappable for S3 / Oracle Object Storage. Served at `/uploads/*`.
 
@@ -108,5 +115,4 @@ Design highlights:
 5. ✅ Frontend auth pages + RTL Tailwind theme
 6. ✅ Listing browse/search with filters
 7. ✅ Post-a-listing dynamic form (category-driven fields)
-8. ✅ Strapi on its own DB
-9. ✅ Full Docker Compose wiring — verified end-to-end
+8. ✅ Full Docker Compose wiring — verified end-to-end

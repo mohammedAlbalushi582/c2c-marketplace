@@ -9,6 +9,18 @@ export function priceTypeLabel(t: string): string {
   return { fixed: "ثابت", negotiable: "قابل للتفاوض", on_request: "عند الطلب" }[t] || t;
 }
 
+/** Formats an OMR amount, e.g. 2 → "٢ ر.ع". */
+export function formatOMR(n: number): string {
+  return `${new Intl.NumberFormat("ar-OM").format(n)} ر.ع`;
+}
+
+/** Days remaining until an ISO date; negative/0 means expired. */
+export function daysUntil(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.ceil(ms / 86_400_000);
+}
+
 export function statusLabel(s: string): string {
   return (
     {

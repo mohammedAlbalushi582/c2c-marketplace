@@ -30,6 +30,16 @@ type Config struct {
 	// Local file-upload storage (swappable for S3/Oracle later).
 	UploadDir     string `envconfig:"UPLOAD_DIR" default:"./uploads"`
 	PublicBaseURL string `envconfig:"PUBLIC_BASE_URL" default:"http://localhost:8080"`
+
+	// Frontend origin — used to build payment success/cancel redirect URLs.
+	FrontendBaseURL string `envconfig:"FRONTEND_BASE_URL" default:"http://localhost:3000"`
+
+	// Payment gateway. "stub" (default) simulates payments for dev/demo; "thawani"
+	// enables the real Thawani Pay checkout once the keys below are set.
+	PaymentProvider       string `envconfig:"PAYMENT_PROVIDER" default:"stub"`
+	ThawaniBaseURL        string `envconfig:"THAWANI_BASE_URL" default:"https://uatcheckout.thawani.om/api/v1"`
+	ThawaniSecretKey      string `envconfig:"THAWANI_SECRET_KEY" default:""`
+	ThawaniPublishableKey string `envconfig:"THAWANI_PUBLISHABLE_KEY" default:""`
 }
 
 // Load reads a .env file when present (dev convenience) then parses env vars.

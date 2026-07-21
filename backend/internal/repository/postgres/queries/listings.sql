@@ -22,11 +22,36 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateListingStatus :one
+-- On activation, stamp published_at (once) and (re)set the expiry window.
 UPDATE listings
 SET status = $2,
-    published_at = CASE WHEN $2 = 'active'::listing_status AND published_at IS NULL THEN now() ELSE published_at END
+    published_at = CASE WHEN $2 = 'active'::listing_status AND published_at IS NULL THEN now() ELSE published_at END,
+    expires_at = CASE WHEN $2 = 'active'::listing_status
+                      THEN now() + (sqlc.arg('duration_days')::int * interval '1 day')
+                      ELSE expires_at END
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
+
+-- name: CountLiveListingsByUser :one
+-- Listings that currently occupy a slot (queued or published) — drives the fee tier.
+SELECT count(*) FROM listings
+WHERE user_id = $1 AND deleted_at IS NULL
+  AND status IN ('pending', 'active');
+
+-- name: SubmitListingForReview :one
+-- Moves a listing into the moderation queue once its fee is paid (new draft or
+-- an expired listing being renewed).
+UPDATE listings
+SET status = 'pending'
+WHERE id = $1 AND deleted_at IS NULL AND status IN ('draft', 'expired')
+RETURNING *;
+
+-- name: ExpireDueListings :execrows
+-- Sweeper: retire active listings whose month is up.
+UPDATE listings
+SET status = 'expired'
+WHERE status = 'active' AND deleted_at IS NULL
+  AND expires_at IS NOT NULL AND expires_at < now();
 
 -- name: SoftDeleteListing :exec
 UPDATE listings SET deleted_at = now() WHERE id = $1;

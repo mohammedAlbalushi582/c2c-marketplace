@@ -22,6 +22,10 @@ type RouterDeps struct {
 	Catalog        *handler.CatalogHandler
 	Listing        *handler.ListingHandler
 	User           *handler.UserHandler
+	Payment        *handler.PaymentHandler
+	Contact        *handler.ContactHandler
+	Settings       *handler.SettingsHandler
+	Presence       *handler.PresenceHandler
 }
 
 // NewRouter builds the chi router with the /api/v1 tree and static uploads.
@@ -70,6 +74,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 		r.Get("/listings", deps.Listing.Search)
 		r.Get("/listings/{id}", deps.Listing.Get)
 
+		// --- contact the owner (راسلنا, public) ---
+		r.Post("/contact", deps.Contact.Create)
+
+		// --- presence heartbeat (public; Optional auth attaches the user) ---
+		r.With(auth.Optional).Post("/presence/ping", deps.Presence.Ping)
+
 		// --- authenticated actions ---
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Require)
@@ -78,11 +88,18 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Put("/listings/{id}", deps.Listing.Update)
 			r.Delete("/listings/{id}", deps.Listing.Delete)
 			r.Post("/listings/{id}/images", deps.Listing.UploadImage)
+			r.Delete("/listings/{id}/images/{imageId}", deps.Listing.DeleteImage)
+			r.Post("/listings/{id}/pay", deps.Listing.Pay)
 			r.Post("/listings/{id}/favorite", deps.Listing.AddFavorite)
 			r.Delete("/listings/{id}/favorite", deps.Listing.RemoveFavorite)
 
 			r.Get("/me/listings", deps.Listing.MyListings)
 			r.Get("/me/favorites", deps.Listing.MyFavorites)
+			r.Get("/me/listing-fee", deps.Payment.Quote)
+
+			// payments
+			r.Get("/payments/{id}", deps.Payment.Get)
+			r.Post("/payments/{id}/verify", deps.Payment.Verify)
 		})
 
 		// --- admin ---
@@ -102,6 +119,18 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/admin/users", deps.User.List)
 			r.Patch("/admin/users/{id}/role", deps.User.SetRole)
 			r.Patch("/admin/users/{id}/status", deps.User.SetStatus)
+
+			// راسلنا inbox
+			r.Get("/admin/contact-messages", deps.Contact.List)
+			r.Patch("/admin/contact-messages/{id}/read", deps.Contact.MarkRead)
+			r.Delete("/admin/contact-messages/{id}", deps.Contact.Delete)
+
+			// fee tiers + listing duration
+			r.Get("/admin/settings", deps.Settings.Get)
+			r.Patch("/admin/settings", deps.Settings.Update)
+
+			// who's online right now
+			r.Get("/admin/presence", deps.Presence.List)
 		})
 	})
 
